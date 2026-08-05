@@ -30,6 +30,31 @@ export function toLocalInputValue(date: Date) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
+/** Día completo anterior a hoy (ignora la hora). */
+export function isPastDay(date: Date, now = new Date()) {
+  const day = new Date(date);
+  day.setHours(0, 0, 0, 0);
+  const today = new Date(now);
+  today.setHours(0, 0, 0, 0);
+  return day.getTime() < today.getTime();
+}
+
+/** Slot (día + hora) ya pasado. */
+export function isPastSlot(day: Date, hour: number, now = new Date()) {
+  const slot = new Date(day);
+  slot.setHours(hour, 0, 0, 0);
+  return slot.getTime() < now.getTime();
+}
+
+export function nextBookableSlot(now = new Date()) {
+  const slot = new Date(now);
+  slot.setMinutes(0, 0, 0);
+  if (slot.getTime() <= now.getTime()) {
+    slot.setHours(slot.getHours() + 1);
+  }
+  return slot;
+}
+
 export async function listAppointmentsInRange(input: {
   from: string;
   to: string;

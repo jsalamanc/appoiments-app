@@ -15,6 +15,13 @@ export type Database = {
           owner_id: string;
           name: string;
           slug: string;
+          modules: {
+            employees: boolean;
+            appointments: boolean;
+            services: boolean;
+            packages: boolean;
+          };
+          plan_id: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -23,6 +30,13 @@ export type Database = {
           owner_id: string;
           name: string;
           slug: string;
+          modules?: {
+            employees: boolean;
+            appointments: boolean;
+            services: boolean;
+            packages: boolean;
+          };
+          plan_id?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -31,6 +45,13 @@ export type Database = {
           owner_id?: string;
           name?: string;
           slug?: string;
+          modules?: {
+            employees: boolean;
+            appointments: boolean;
+            services: boolean;
+            packages: boolean;
+          };
+          plan_id?: string | null;
           created_at?: string;
           updated_at?: string;
         };

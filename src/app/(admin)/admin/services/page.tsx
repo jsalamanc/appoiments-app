@@ -1,3 +1,4 @@
+import { ModuleGate } from "@/components/admin/module-gate";
 import { ServicesManager } from "@/components/admin/services-manager";
 import { listServices } from "@/lib/catalog-list";
 
@@ -10,14 +11,16 @@ export default async function ServicesPage({
   const result = await listServices(params);
 
   return (
-    <ServicesManager
-      services={result.items}
-      status={result.status}
-      counts={result.counts}
-      page={result.page}
-      totalPages={result.totalPages}
-      total={result.total}
-      pageSize={result.pageSize}
-    />
+    <ModuleGate module="services">
+      <ServicesManager
+        services={result.items}
+        status={result.status}
+        counts={result.counts}
+        page={result.page}
+        totalPages={result.totalPages}
+        total={result.total}
+        pageSize={result.pageSize}
+      />
+    </ModuleGate>
   );
 }

@@ -9,13 +9,14 @@ import {
   Menu,
   Package,
   Receipt,
+  Settings,
   ShoppingBag,
   Sparkles,
   Users,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -25,17 +26,31 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import {
+  isModuleEnabled,
+  parseCenterModules,
+  type ModuleKey,
+} from "@/lib/modules";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import type { Center } from "@/types/database";
 
-const links = [
+type NavLink = {
+  href: string;
+  label: string;
+  icon: typeof LayoutDashboard;
+  exact?: boolean;
+  module?: ModuleKey;
+};
+
+const links: NavLink[] = [
   { href: "/admin", label: "Panel", icon: LayoutDashboard, exact: true },
   {
     href: "/admin/appointments",
     label: "Agenda",
     icon: CalendarDays,
     exact: true,
+    module: "appointments",
   },
   { href: "/admin/sales", label: "Nueva venta", icon: Receipt, exact: true },
   {
@@ -44,24 +59,27 @@ const links = [
     icon: History,
     exact: true,
   },
-  { href: "/admin/employees", label: "Empleados", icon: Users },
+  { href: "/admin/employees", label: "Empleados", icon: Users, module: "employees" },
   { href: "/admin/products", label: "Productos", icon: ShoppingBag },
-  { href: "/admin/services", label: "Servicios", icon: Sparkles },
-  { href: "/admin/packages", label: "Paquetes", icon: Package },
+  { href: "/admin/services", label: "Servicios", icon: Sparkles, module: "services" },
+  { href: "/admin/packages", label: "Paquetes", icon: Package, module: "packages" },
+  { href: "/admin/settings", label: "Ajustes", icon: Settings },
 ];
 
 function NavLinks({
   pathname,
   onNavigate,
   layoutId,
+  visibleLinks,
 }: {
   pathname: string;
   onNavigate?: () => void;
   layoutId: string;
+  visibleLinks: NavLink[];
 }) {
   return (
     <nav className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto">
-      {links.map((link) => {
+      {visibleLinks.map((link) => {
         const active = link.exact
           ? pathname === link.href
           : pathname.startsWith(link.href);
@@ -113,6 +131,19 @@ export function AdminSidebar({ center }: { center: Center | null }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
 
+  const modules = useMemo(
+    () => parseCenterModules(center?.modules),
+    [center?.modules]
+  );
+
+  const visibleLinks = useMemo(
+    () =>
+      links.filter(
+        (link) => !link.module || isModuleEnabled(modules, link.module)
+      ),
+    [modules]
+  );
+
   useEffect(() => {
     setOpen(false);
   }, [pathname]);
@@ -127,7 +158,6 @@ export function AdminSidebar({ center }: { center: Center | null }) {
 
   return (
     <>
-      {/* Mobile / tablet top bar */}
       <header className="flex shrink-0 items-center justify-between border-b border-sidebar-border bg-sidebar/80 px-4 py-3 backdrop-blur lg:hidden">
         <div className="min-w-0">
           <p className="font-heading text-xl font-semibold">Aura Studio</p>
@@ -165,6 +195,7 @@ export function AdminSidebar({ center }: { center: Center | null }) {
               pathname={pathname}
               layoutId="admin-nav-mobile"
               onNavigate={() => setOpen(false)}
+              visibleLinks={visibleLinks}
             />
             <Button
               variant="ghost"
@@ -178,13 +209,16 @@ export function AdminSidebar({ center }: { center: Center | null }) {
         </SheetContent>
       </Sheet>
 
-      {/* Desktop sidebar */}
       <aside className="hidden h-full w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar/80 px-4 py-5 backdrop-blur lg:flex">
         <div className="mb-8 shrink-0">
           <Brand center={center} />
         </div>
 
-        <NavLinks pathname={pathname} layoutId="admin-nav-desktop" />
+        <NavLinks
+          pathname={pathname}
+          layoutId="admin-nav-desktop"
+          visibleLinks={visibleLinks}
+        />
 
         <Button
           variant="ghost"

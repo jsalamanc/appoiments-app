@@ -1,3 +1,4 @@
+import { ModuleGate } from "@/components/admin/module-gate";
 import { PackagesManager } from "@/components/admin/packages-manager";
 import { listPackages } from "@/lib/catalog-list";
 import { createClient } from "@/lib/supabase/server";
@@ -17,16 +18,18 @@ export default async function PackagesPage({
   ]);
 
   return (
-    <PackagesManager
-      packages={result.items}
-      products={productsRes.data ?? []}
-      services={servicesRes.data ?? []}
-      status={result.status}
-      counts={result.counts}
-      page={result.page}
-      totalPages={result.totalPages}
-      total={result.total}
-      pageSize={result.pageSize}
-    />
+    <ModuleGate module="packages">
+      <PackagesManager
+        packages={result.items}
+        products={productsRes.data ?? []}
+        services={servicesRes.data ?? []}
+        status={result.status}
+        counts={result.counts}
+        page={result.page}
+        totalPages={result.totalPages}
+        total={result.total}
+        pageSize={result.pageSize}
+      />
+    </ModuleGate>
   );
 }

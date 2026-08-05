@@ -44,10 +44,10 @@ type CatalogTypeFilter = "all" | SaleItemType;
 
 const CATALOG_PAGE_SIZE = 3;
 
-const TYPE_FILTERS: { value: CatalogTypeFilter; label: string }[] = [
+const BASE_TYPE_FILTERS: { value: CatalogTypeFilter; label: string }[] = [
   { value: "all", label: "Todos" },
-  { value: "service", label: "Servicios" },
   { value: "product", label: "Productos" },
+  { value: "service", label: "Servicios" },
   { value: "package", label: "Paquetes" },
 ];
 
@@ -89,6 +89,10 @@ export function SaleForm({ prefill }: { prefill?: SaleFormPrefill }) {
     prefill?.appointmentId ?? null
   );
   const [prefillDone, setPrefillDone] = useState(false);
+  const [modulesEnabled, setModulesEnabled] = useState({
+    services: true,
+    packages: true,
+  });
 
   useEffect(() => {
     let active = true;
@@ -104,6 +108,12 @@ export function SaleForm({ prefill }: { prefill?: SaleFormPrefill }) {
         setDraftCount(catalog.draftCount);
         setTotalCount(catalog.totalCount);
         setCatalogError(catalog.error);
+        setModulesEnabled(catalog.modules);
+        setCatalogFilter((current) => {
+          if (current === "service" && !catalog.modules.services) return "all";
+          if (current === "package" && !catalog.modules.packages) return "all";
+          return current;
+        });
       } catch (err) {
         if (!active) return;
         setCatalogError(
@@ -183,6 +193,16 @@ export function SaleForm({ prefill }: { prefill?: SaleFormPrefill }) {
     };
   }, [catalogLoading, prefill, prefillDone, services]);
 
+  const typeFilters = useMemo(
+    () =>
+      BASE_TYPE_FILTERS.filter((filter) => {
+        if (filter.value === "service") return modulesEnabled.services;
+        if (filter.value === "package") return modulesEnabled.packages;
+        return true;
+      }),
+    [modulesEnabled]
+  );
+
   const catalogOptions = useMemo<CatalogOption[]>(() => {
     const productOptions = products.map((p) => ({
       item_type: "product" as const,
@@ -191,20 +211,24 @@ export function SaleForm({ prefill }: { prefill?: SaleFormPrefill }) {
       unit_price: Number(p.price),
       stock: p.stock,
     }));
-    const serviceOptions = services.map((s) => ({
-      item_type: "service" as const,
-      item_id: s.id,
-      name: s.name,
-      unit_price: Number(s.price),
-    }));
-    const packageOptions = packages.map((p) => ({
-      item_type: "package" as const,
-      item_id: p.id,
-      name: p.name,
-      unit_price: Number(p.price),
-    }));
+    const serviceOptions = modulesEnabled.services
+      ? services.map((s) => ({
+          item_type: "service" as const,
+          item_id: s.id,
+          name: s.name,
+          unit_price: Number(s.price),
+        }))
+      : [];
+    const packageOptions = modulesEnabled.packages
+      ? packages.map((p) => ({
+          item_type: "package" as const,
+          item_id: p.id,
+          name: p.name,
+          unit_price: Number(p.price),
+        }))
+      : [];
     return [...productOptions, ...serviceOptions, ...packageOptions];
-  }, [products, services, packages]);
+  }, [products, services, packages, modulesEnabled]);
 
   const cartQuantityByProduct = useMemo(() => {
     const map = new Map<string, number>();
@@ -543,7 +567,7 @@ export function SaleForm({ prefill }: { prefill?: SaleFormPrefill }) {
           </div>
 
           <div className="flex flex-wrap gap-2">
-            {TYPE_FILTERS.map((filter) => (
+            {typeFilters.map((filter) => (
               <button
                 key={filter.value}
                 type="button"

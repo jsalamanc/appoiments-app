@@ -18,6 +18,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
   createAppointment,
+  nextBookableSlot,
   toLocalInputValue,
   updateAppointment,
 } from "@/lib/appointments";
@@ -216,8 +217,16 @@ function AppointmentFormFields({
   const save = async (values: AppointmentValues) => {
     setLoading(true);
     try {
+      const startsAtDate = new Date(values.starts_at);
+      if (Number.isNaN(startsAtDate.getTime())) {
+        throw new Error("Fecha y hora inválidas");
+      }
+      if (startsAtDate.getTime() < Date.now()) {
+        throw new Error("No puedes agendar en una fecha u hora pasada");
+      }
+
       const readyCustomer = await ensureCustomer();
-      const startsAt = new Date(values.starts_at).toISOString();
+      const startsAt = startsAtDate.toISOString();
 
       if (appointment) {
         await updateAppointment({
@@ -392,6 +401,7 @@ function AppointmentFormFields({
             <Input
               id="appt-starts"
               type="datetime-local"
+              min={toLocalInputValue(nextBookableSlot())}
               {...register("starts_at")}
             />
             {errors.starts_at && (

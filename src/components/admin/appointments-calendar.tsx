@@ -27,12 +27,17 @@ import {
   addDays,
   endOfWeek,
   formatAppointmentStatus,
+  isPastDay,
+  isPastSlot,
   listAppointmentsInRange,
+  nextBookableSlot,
   setAppointmentStatus,
   startOfWeek,
 } from "@/lib/appointments";
+import { getCurrentCenter } from "@/lib/catalog";
 import { listEmployees } from "@/lib/employees";
 import { formatCurrency, formatDateTime, formatDuration } from "@/lib/format";
+import { isModuleEnabled, parseCenterModules } from "@/lib/modules";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import type {
@@ -96,6 +101,7 @@ export function AppointmentsCalendar() {
   const [defaultStartsAt, setDefaultStartsAt] = useState<Date | null>(null);
   const [detail, setDetail] = useState<AppointmentWithDetails | null>(null);
   const [statusLoading, setStatusLoading] = useState(false);
+  const [servicesModuleEnabled, setServicesModuleEnabled] = useState(true);
 
   const days = useMemo(
     () => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)),
@@ -106,13 +112,20 @@ export function AppointmentsCalendar() {
     setLoading(true);
     try {
       const supabase = createClient();
+      const center = await getCurrentCenter();
+      const modules = parseCenterModules(center?.modules);
+      const servicesOn = isModuleEnabled(modules, "services");
+      setServicesModuleEnabled(servicesOn);
+
       const [emps, servicesRes, appts] = await Promise.all([
         listEmployees(),
-        supabase
-          .from("services")
-          .select("*")
-          .eq("status", "published")
-          .order("name"),
+        servicesOn
+          ? supabase
+              .from("services")
+              .select("*")
+              .eq("status", "published")
+              .order("name")
+          : Promise.resolve({ data: [] as Service[], error: null }),
         listAppointmentsInRange({
           from: weekStart.toISOString(),
           to: endOfWeek(weekStart).toISOString(),
@@ -138,6 +151,10 @@ export function AppointmentsCalendar() {
   const activeEmployees = employees.filter((e) => e.active);
 
   const openCreate = (day: Date, hour: number) => {
+    if (isPastSlot(day, hour)) {
+      toast.error("No puedes agendar en horarios pasados");
+      return;
+    }
     const start = new Date(day);
     start.setHours(hour, 0, 0, 0);
     setSelected(null);
@@ -187,10 +204,14 @@ export function AppointmentsCalendar() {
         <Button
           onClick={() => {
             setSelected(null);
-            setDefaultStartsAt(new Date());
+            setDefaultStartsAt(nextBookableSlot());
             setFormOpen(true);
           }}
-          disabled={activeEmployees.length === 0 || services.length === 0}
+          disabled={
+            activeEmployees.length === 0 ||
+            services.length === 0 ||
+            !servicesModuleEnabled
+          }
         >
           <Plus data-icon="inline-start" />
           Nueva cita
@@ -207,7 +228,17 @@ export function AppointmentsCalendar() {
         </FadeIn>
       )}
 
-      {services.length === 0 && (
+      {!servicesModuleEnabled && (
+        <FadeIn className="rounded-3xl border border-dashed border-border bg-card/50 p-5 text-sm text-muted-foreground">
+          El módulo de Servicios está apagado.{" "}
+          <Link href="/admin/settings" className="underline">
+            Actívalo en Ajustes
+          </Link>{" "}
+          para poder agendar citas.
+        </FadeIn>
+      )}
+
+      {servicesModuleEnabled && services.length === 0 && (
         <FadeIn className="rounded-3xl border border-dashed border-border bg-card/50 p-5 text-sm text-muted-foreground">
           Publica al menos un{" "}
           <Link href="/admin/services" className="underline">
@@ -281,16 +312,34 @@ export function AppointmentsCalendar() {
               }}
             >
               <div className="border-b border-border/60" />
-              {days.map((day) => (
-                <div
-                  key={day.toISOString()}
-                  className="border-b border-l border-border/60 px-2 py-3 text-center"
-                >
-                  <p className="text-xs font-medium capitalize text-muted-foreground">
-                    {dayLabel(day)}
-                  </p>
-                </div>
-              ))}
+              {days.map((day) => {
+                const pastDay = isPastDay(day);
+                return (
+                  <div
+                    key={day.toISOString()}
+                    className={cn(
+                      "border-b border-l border-border/60 px-2 py-3 text-center",
+                      pastDay && "bg-muted/40"
+                    )}
+                  >
+                    <p
+                      className={cn(
+                        "text-xs font-medium capitalize",
+                        pastDay
+                          ? "text-muted-foreground/60 line-through"
+                          : "text-muted-foreground"
+                      )}
+                    >
+                      {dayLabel(day)}
+                    </p>
+                    {pastDay && (
+                      <p className="mt-0.5 text-[10px] text-muted-foreground/70">
+                        Pasado
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
 
               <div className="relative">
                 {HOURS.map((hour) => (
@@ -306,25 +355,42 @@ export function AppointmentsCalendar() {
 
               {days.map((day) => {
                 const dayAppts = appointmentsForDay(day);
+                const pastDay = isPastDay(day);
                 return (
                   <div
                     key={`col-${day.toISOString()}`}
-                    className="relative border-l border-border/60"
+                    className={cn(
+                      "relative border-l border-border/60",
+                      pastDay && "bg-muted/25"
+                    )}
                     style={{ height: HOURS.length * HOUR_HEIGHT }}
                   >
-                    {HOURS.map((hour) => (
-                      <button
-                        key={hour}
-                        type="button"
-                        className="absolute right-0 left-0 border-b border-border/30 transition hover:bg-muted/40"
-                        style={{
-                          top: (hour - DAY_START_HOUR) * HOUR_HEIGHT,
-                          height: HOUR_HEIGHT,
-                        }}
-                        onClick={() => openCreate(day, hour)}
-                        aria-label={`Agendar ${dayLabel(day)} ${hour}:00`}
-                      />
-                    ))}
+                    {HOURS.map((hour) => {
+                      const pastSlot = isPastSlot(day, hour);
+                      return (
+                        <button
+                          key={hour}
+                          type="button"
+                          disabled={pastSlot}
+                          className={cn(
+                            "absolute right-0 left-0 border-b border-border/30 transition",
+                            pastSlot
+                              ? "cursor-not-allowed bg-muted/30"
+                              : "hover:bg-muted/40"
+                          )}
+                          style={{
+                            top: (hour - DAY_START_HOUR) * HOUR_HEIGHT,
+                            height: HOUR_HEIGHT,
+                          }}
+                          onClick={() => openCreate(day, hour)}
+                          aria-label={
+                            pastSlot
+                              ? `Horario pasado ${dayLabel(day)} ${hour}:00`
+                              : `Agendar ${dayLabel(day)} ${hour}:00`
+                          }
+                        />
+                      );
+                    })}
 
                     {dayAppts.map((appointment) => {
                       const top = appointmentTop(appointment.starts_at);
@@ -439,6 +505,7 @@ export function AppointmentsCalendar() {
                     </Button>
                     <Button
                       variant="outline"
+                      disabled={new Date(detail.starts_at).getTime() < Date.now()}
                       onClick={() => openEdit(detail)}
                     >
                       Editar

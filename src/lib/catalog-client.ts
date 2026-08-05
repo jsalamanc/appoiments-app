@@ -1,3 +1,5 @@
+import { getCurrentCenter } from "@/lib/catalog";
+import { isModuleEnabled, parseCenterModules } from "@/lib/modules";
 import { createClient } from "@/lib/supabase/client";
 import type { Package, Product, Service } from "@/types/database";
 
@@ -8,15 +10,27 @@ export type SellableCatalog = {
   draftCount: number;
   totalCount: number;
   error: string | null;
+  modules: {
+    services: boolean;
+    packages: boolean;
+  };
 };
 
 export async function fetchSellableCatalog(): Promise<SellableCatalog> {
   const supabase = createClient();
+  const center = await getCurrentCenter();
+  const modules = parseCenterModules(center?.modules);
+  const servicesEnabled = isModuleEnabled(modules, "services");
+  const packagesEnabled = isModuleEnabled(modules, "packages");
 
   const [productsRes, servicesRes, packagesRes] = await Promise.all([
     supabase.from("products").select("*").order("name"),
-    supabase.from("services").select("*").order("name"),
-    supabase.from("packages").select("*").order("name"),
+    servicesEnabled
+      ? supabase.from("services").select("*").order("name")
+      : Promise.resolve({ data: [] as Service[], error: null }),
+    packagesEnabled
+      ? supabase.from("packages").select("*").order("name")
+      : Promise.resolve({ data: [] as Package[], error: null }),
   ]);
 
   const error =
@@ -47,5 +61,9 @@ export async function fetchSellableCatalog(): Promise<SellableCatalog> {
     draftCount,
     totalCount,
     error,
+    modules: {
+      services: servicesEnabled,
+      packages: packagesEnabled,
+    },
   };
 }
