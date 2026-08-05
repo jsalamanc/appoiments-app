@@ -92,3 +92,45 @@ export async function ensureCustomer(input: {
   if (existing) return existing;
   return createCustomer(input);
 }
+
+export async function updateCustomer(
+  id: string,
+  input: {
+    name: string;
+    phone: string;
+    email: string;
+    document: string;
+  }
+): Promise<Customer> {
+  const supabase = createClient();
+  const center = await getCurrentCenter();
+  if (!center) throw new Error("No se encontró el centro");
+
+  const payload = {
+    name: input.name.trim(),
+    phone: input.phone.trim(),
+    email: normalizeEmail(input.email),
+    document: normalizeDocument(input.document),
+  };
+
+  const { data, error } = await supabase
+    .from("customers")
+    .update(payload)
+    .eq("id", id)
+    .eq("center_id", center.id)
+    .select("*")
+    .single();
+
+  if (error) {
+    if (error.code === "23505") {
+      const message = error.message.toLowerCase();
+      if (message.includes("document")) {
+        throw new Error("Ya existe un cliente con ese documento");
+      }
+      throw new Error("Ya existe un cliente con ese correo");
+    }
+    throw error;
+  }
+
+  return data;
+}

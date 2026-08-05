@@ -1,8 +1,11 @@
 "use client";
 
-import { ArrowLeft, CalendarDays, Receipt } from "lucide-react";
+import { ArrowLeft, CalendarDays, Pencil, Receipt } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 
+import { CustomerFormDialog } from "@/components/admin/customer-form-dialog";
 import { FadeIn } from "@/components/motion/fade-in";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -26,11 +29,19 @@ type CustomerDetailProps = {
 };
 
 export function CustomerDetail({
-  customer,
+  customer: initialCustomer,
   sales,
   appointments,
   appointmentsEnabled,
 }: CustomerDetailProps) {
+  const router = useRouter();
+  const [customer, setCustomer] = useState(initialCustomer);
+  const [editOpen, setEditOpen] = useState(false);
+
+  useEffect(() => {
+    setCustomer(initialCustomer);
+  }, [initialCustomer]);
+
   return (
     <div className="mx-auto max-w-5xl space-y-6">
       <FadeIn className="space-y-4">
@@ -42,18 +53,34 @@ export function CustomerDetail({
           <ArrowLeft data-icon="inline-start" />
           Volver a clientes
         </Button>
-        <div>
-          <p className="text-sm text-muted-foreground">Cliente</p>
-          <h1 className="font-heading text-4xl font-semibold">
-            {customer.name}
-          </h1>
-          <div className="mt-2 space-y-1 text-sm text-muted-foreground">
-            <p>{customer.email}</p>
-            <p>{customer.phone}</p>
-            <p>Documento: {customer.document}</p>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <p className="text-sm text-muted-foreground">Cliente</p>
+            <h1 className="font-heading text-4xl font-semibold">
+              {customer.name}
+            </h1>
+            <div className="mt-2 space-y-1 text-sm text-muted-foreground">
+              <p>{customer.email}</p>
+              <p>{customer.phone}</p>
+              <p>Documento: {customer.document}</p>
+            </div>
           </div>
+          <Button variant="outline" onClick={() => setEditOpen(true)}>
+            <Pencil data-icon="inline-start" />
+            Editar datos
+          </Button>
         </div>
       </FadeIn>
+
+      <CustomerFormDialog
+        open={editOpen}
+        onOpenChange={setEditOpen}
+        customer={customer}
+        onSuccess={(updated) => {
+          setCustomer(updated);
+          router.refresh();
+        }}
+      />
 
       <FadeIn
         delay={0.05}
