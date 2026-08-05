@@ -3,9 +3,11 @@
 import Link from "next/link";
 
 import { EmptyState } from "@/components/admin/empty-state";
+import { ReportExportButtons } from "@/components/admin/report-export-buttons";
 import { ReportPeriodFilter } from "@/components/admin/report-period-filter";
 import { FadeIn } from "@/components/motion/fade-in";
 import { Badge } from "@/components/ui/badge";
+import { downloadCsv, periodLabel } from "@/lib/export-csv";
 import { formatDateTime } from "@/lib/format";
 import type { NoShowCustomerRow } from "@/lib/reports";
 import type { RevenuePeriod } from "@/lib/sales";
@@ -32,6 +34,32 @@ export function ReportsNoShows({
   rows,
   recent,
 }: ReportsNoShowsProps) {
+  const exportExcel = () => {
+    downloadCsv(
+      `no-shows-cancelaciones-${periodLabel(period)}.csv`,
+      [
+        "Cliente",
+        "Email",
+        "Telefono",
+        "No-show",
+        "Canceladas",
+        "Total",
+        "No-shows periodo",
+        "Cancelaciones periodo",
+      ],
+      rows.map((row) => [
+        row.name,
+        row.email,
+        row.phone,
+        row.noShowCount,
+        row.cancelledCount,
+        row.lostCount,
+        noShowTotal,
+        cancelledTotal,
+      ])
+    );
+  };
+
   return (
     <div className="mx-auto max-w-5xl space-y-6">
       <FadeIn className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
@@ -44,7 +72,13 @@ export function ReportsNoShows({
             Clientes con citas perdidas o canceladas en el periodo.
           </p>
         </div>
-        <ReportPeriodFilter period={period} />
+        <div className="flex flex-col items-stretch gap-2 sm:items-end">
+          <ReportPeriodFilter period={period} />
+          <ReportExportButtons
+            onExportExcel={exportExcel}
+            excelDisabled={rows.length === 0}
+          />
+        </div>
       </FadeIn>
 
       <FadeIn delay={0.05} className="grid gap-4 sm:grid-cols-2">

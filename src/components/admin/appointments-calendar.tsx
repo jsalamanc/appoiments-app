@@ -37,7 +37,9 @@ import {
 import { getCurrentCenter } from "@/lib/catalog";
 import { listEmployees } from "@/lib/employees";
 import { formatCurrency, formatDateTime, formatDuration } from "@/lib/format";
-import { isModuleEnabled, parseCenterModules } from "@/lib/modules";
+import { parseCenterModules } from "@/lib/modules";
+import { canUseModule } from "@/lib/plan-modules";
+import { getCurrentPlanAllowed } from "@/lib/plans";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import type {
@@ -114,7 +116,8 @@ export function AppointmentsCalendar() {
       const supabase = createClient();
       const center = await getCurrentCenter();
       const modules = parseCenterModules(center?.modules);
-      const servicesOn = isModuleEnabled(modules, "services");
+      const planAllowed = await getCurrentPlanAllowed();
+      const servicesOn = canUseModule(modules, planAllowed, "services");
       setServicesModuleEnabled(servicesOn);
 
       const [emps, servicesRes, appts] = await Promise.all([

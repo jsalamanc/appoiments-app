@@ -1,4 +1,5 @@
 import { ModuleGate } from "@/components/admin/module-gate";
+import { OwnerGate } from "@/components/admin/owner-gate";
 import { ReportsNoShows } from "@/components/admin/reports-no-shows";
 import { getNoShowsReport, getReportPeriod } from "@/lib/reports-server";
 
@@ -12,14 +13,16 @@ export default async function ReportsNoShowsPage({ searchParams }: PageProps) {
   const data = await getNoShowsReport(period);
 
   return (
-    <ModuleGate module="appointments">
-      <ReportsNoShows
-        period={data.period}
-        noShowTotal={data.noShowTotal}
-        cancelledTotal={data.cancelledTotal}
-        rows={data.rows}
-        recent={data.recent}
-      />
-    </ModuleGate>
+    <OwnerGate>
+      <ModuleGate module="reports">
+        <ReportsNoShows
+          period={data.period}
+          noShowTotal={data.noShowTotal}
+          cancelledTotal={data.cancelledTotal}
+          rows={data.rows}
+          recent={data.recent}
+        />
+      </ModuleGate>
+    </OwnerGate>
   );
 }

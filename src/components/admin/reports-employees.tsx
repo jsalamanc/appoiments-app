@@ -1,8 +1,10 @@
 "use client";
 
 import { EmptyState } from "@/components/admin/empty-state";
+import { ReportExportButtons } from "@/components/admin/report-export-buttons";
 import { ReportPeriodFilter } from "@/components/admin/report-period-filter";
 import { FadeIn } from "@/components/motion/fade-in";
+import { downloadCsv, periodLabel } from "@/lib/export-csv";
 import { formatCurrency } from "@/lib/format";
 import type { EmployeePerformanceRow } from "@/lib/reports";
 import type { RevenuePeriod } from "@/lib/sales";
@@ -16,6 +18,28 @@ export function ReportsEmployees({ period, rows }: ReportsEmployeesProps) {
   const totalCompleted = rows.reduce((sum, r) => sum + r.completed, 0);
   const totalRevenue = rows.reduce((sum, r) => sum + r.revenue, 0);
 
+  const exportExcel = () => {
+    downloadCsv(
+      `rendimiento-empleados-${periodLabel(period)}.csv`,
+      [
+        "Empleado",
+        "Completadas",
+        "Programadas",
+        "No show",
+        "Canceladas",
+        "Ingresos",
+      ],
+      rows.map((row) => [
+        row.name,
+        row.completed,
+        row.scheduled,
+        row.noShow,
+        row.cancelled,
+        row.revenue,
+      ])
+    );
+  };
+
   return (
     <div className="mx-auto max-w-5xl space-y-6">
       <FadeIn className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
@@ -28,7 +52,13 @@ export function ReportsEmployees({ period, rows }: ReportsEmployeesProps) {
             Citas y cobros vinculados a cada profesional en el periodo.
           </p>
         </div>
-        <ReportPeriodFilter period={period} />
+        <div className="flex flex-col items-stretch gap-2 sm:items-end">
+          <ReportPeriodFilter period={period} />
+          <ReportExportButtons
+            onExportExcel={exportExcel}
+            excelDisabled={rows.length === 0}
+          />
+        </div>
       </FadeIn>
 
       <FadeIn delay={0.05} className="grid gap-4 sm:grid-cols-2">
@@ -72,7 +102,7 @@ export function ReportsEmployees({ period, rows }: ReportsEmployeesProps) {
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
                         <span
-                          className="size-2.5 shrink-0 rounded-full"
+                          className="size-2.5 shrink-0 rounded-full print-hidden"
                           style={{ backgroundColor: row.color }}
                         />
                         <span className="font-medium">{row.name}</span>

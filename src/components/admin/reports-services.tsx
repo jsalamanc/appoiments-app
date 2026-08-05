@@ -1,8 +1,10 @@
 "use client";
 
 import { EmptyState } from "@/components/admin/empty-state";
+import { ReportExportButtons } from "@/components/admin/report-export-buttons";
 import { ReportPeriodFilter } from "@/components/admin/report-period-filter";
 import { FadeIn } from "@/components/motion/fade-in";
+import { downloadCsv, periodLabel } from "@/lib/export-csv";
 import { formatCurrency } from "@/lib/format";
 import type { TopServiceRow } from "@/lib/reports";
 import type { RevenuePeriod } from "@/lib/sales";
@@ -22,6 +24,21 @@ export function ReportsServices({
   averageTicket,
   rows,
 }: ReportsServicesProps) {
+  const exportExcel = () => {
+    downloadCsv(
+      `servicios-ticket-${periodLabel(period)}.csv`,
+      ["#", "Servicio", "Cantidad", "Ingresos", "Ventas periodo", "Ticket promedio"],
+      rows.map((row, index) => [
+        index + 1,
+        row.name,
+        row.quantity,
+        row.revenue,
+        salesCount,
+        Number(averageTicket.toFixed(2)),
+      ])
+    );
+  };
+
   return (
     <div className="mx-auto max-w-5xl space-y-6">
       <FadeIn className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
@@ -34,7 +51,13 @@ export function ReportsServices({
             Servicios más vendidos y ticket promedio del periodo.
           </p>
         </div>
-        <ReportPeriodFilter period={period} />
+        <div className="flex flex-col items-stretch gap-2 sm:items-end">
+          <ReportPeriodFilter period={period} />
+          <ReportExportButtons
+            onExportExcel={exportExcel}
+            excelDisabled={rows.length === 0}
+          />
+        </div>
       </FadeIn>
 
       <FadeIn delay={0.05} className="grid gap-4 sm:grid-cols-3">

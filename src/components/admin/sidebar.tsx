@@ -35,14 +35,15 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import {
-  isModuleEnabled,
   parseCenterModules,
   type CenterModules,
   type ModuleKey,
 } from "@/lib/modules";
+import { canUseModule } from "@/lib/plan-modules";
+import { isOwnerRole } from "@/lib/roles";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
-import type { Center } from "@/types/database";
+import type { Center, MemberRole } from "@/types/database";
 
 type NavLink = {
   href: string;
@@ -50,6 +51,7 @@ type NavLink = {
   icon: typeof LayoutDashboard;
   exact?: boolean;
   module?: ModuleKey;
+  ownerOnly?: boolean;
 };
 
 type NavGroup = {
@@ -154,28 +156,37 @@ const navGroups: NavGroup[] = [
         label: "Por empleado",
         icon: ChartColumn,
         exact: true,
-        module: "appointments",
+        module: "reports",
+        ownerOnly: true,
       },
       {
         href: "/admin/reports/services",
         label: "Servicios",
         icon: BarChart3,
         exact: true,
-        module: "services",
+        module: "reports",
+        ownerOnly: true,
       },
       {
         href: "/admin/reports/no-shows",
         label: "No-shows",
         icon: UserX,
         exact: true,
-        module: "appointments",
+        module: "reports",
+        ownerOnly: true,
       },
     ],
   },
 ];
 
-function isLinkVisible(link: NavLink, modules: CenterModules) {
-  return !link.module || isModuleEnabled(modules, link.module);
+function isLinkVisible(
+  link: NavLink,
+  modules: CenterModules,
+  planAllowed: CenterModules,
+  role: MemberRole | null
+) {
+  if (link.ownerOnly && !isOwnerRole(role)) return false;
+  return !link.module || canUseModule(modules, planAllowed, link.module);
 }
 
 function isLinkActive(pathname: string, link: NavLink) {
@@ -184,8 +195,15 @@ function isLinkActive(pathname: string, link: NavLink) {
     : pathname.startsWith(link.href);
 }
 
-function filterLinks(links: NavLink[], modules: CenterModules) {
-  return links.filter((link) => isLinkVisible(link, modules));
+function filterLinks(
+  links: NavLink[],
+  modules: CenterModules,
+  planAllowed: CenterModules,
+  role: MemberRole | null
+) {
+  return links.filter((link) =>
+    isLinkVisible(link, modules, planAllowed, role)
+  );
 }
 
 function NavLinkItem({
@@ -234,15 +252,19 @@ function NavPanel({
   onNavigate,
   layoutId,
   modules,
+  planAllowed,
+  role,
 }: {
   pathname: string;
   onNavigate?: () => void;
   layoutId: string;
   modules: CenterModules;
+  planAllowed: CenterModules;
+  role: MemberRole | null;
 }) {
   const visiblePrimary = useMemo(
-    () => filterLinks(primaryLinks, modules),
-    [modules]
+    () => filterLinks(primaryLinks, modules, planAllowed, role),
+    [modules, planAllowed, role]
   );
 
   const visibleGroups = useMemo(
@@ -250,10 +272,10 @@ function NavPanel({
       navGroups
         .map((group) => ({
           ...group,
-          items: filterLinks(group.items, modules),
+          items: filterLinks(group.items, modules, planAllowed, role),
         }))
         .filter((group) => group.items.length > 0),
-    [modules]
+    [modules, planAllowed, role]
   );
 
   const activeGroupId = useMemo(() => {
@@ -332,18 +354,21 @@ function NavPanel({
         </div>
       </nav>
 
-      <div className="mt-3 shrink-0 space-y-1 border-t border-sidebar-border pt-3">
-        <NavLinkItem
-          link={{
-            href: "/admin/settings",
-            label: "Ajustes",
-            icon: Settings,
-          }}
-          pathname={pathname}
-          onNavigate={onNavigate}
-          layoutId={layoutId}
-        />
-      </div>
+      {isOwnerRole(role) && (
+        <div className="mt-3 shrink-0 space-y-1 border-t border-sidebar-border pt-3">
+          <NavLinkItem
+            link={{
+              href: "/admin/settings",
+              label: "Ajustes",
+              icon: Settings,
+              ownerOnly: true,
+            }}
+            pathname={pathname}
+            onNavigate={onNavigate}
+            layoutId={layoutId}
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -361,7 +386,15 @@ function Brand({ center }: { center: Center | null }) {
   );
 }
 
-export function AdminSidebar({ center }: { center: Center | null }) {
+export function AdminSidebar({
+  center,
+  role,
+  planAllowed,
+}: {
+  center: Center | null;
+  role: MemberRole | null;
+  planAllowed: CenterModules;
+}) {
   const pathname = usePathname();
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -385,7 +418,7 @@ export function AdminSidebar({ center }: { center: Center | null }) {
 
   return (
     <>
-      <header className="flex shrink-0 items-center justify-between border-b border-sidebar-border bg-sidebar/80 px-4 py-3 backdrop-blur lg:hidden">
+      <header className="print-hidden flex shrink-0 items-center justify-between border-b border-sidebar-border bg-sidebar/80 px-4 py-3 backdrop-blur lg:hidden">
         <div className="min-w-0">
           <p className="font-heading text-xl font-semibold">Aura Studio</p>
           <p className="truncate text-xs text-muted-foreground">
@@ -423,6 +456,8 @@ export function AdminSidebar({ center }: { center: Center | null }) {
               layoutId="admin-nav-mobile"
               onNavigate={() => setOpen(false)}
               modules={modules}
+              planAllowed={planAllowed}
+              role={role}
             />
             <Button
               variant="ghost"
@@ -445,6 +480,8 @@ export function AdminSidebar({ center }: { center: Center | null }) {
           pathname={pathname}
           layoutId="admin-nav-desktop"
           modules={modules}
+          planAllowed={planAllowed}
+          role={role}
         />
 
         <Button

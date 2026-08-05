@@ -31,6 +31,8 @@ type ProductsManagerProps = {
   totalPages: number;
   total: number;
   pageSize: number;
+  /** null = sin límite */
+  productLimit: number | null;
 };
 
 export function ProductsManager({
@@ -41,6 +43,7 @@ export function ProductsManager({
   totalPages,
   total,
   pageSize,
+  productLimit,
 }: ProductsManagerProps) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -50,6 +53,19 @@ export function ProductsManager({
 
   const refresh = () => router.refresh();
   const hasAny = counts.all > 0;
+  const atLimit =
+    productLimit !== null && counts.all >= productLimit;
+
+  const openCreate = () => {
+    if (atLimit) {
+      toast.error(
+        `Tu plan Free permite máximo ${productLimit} productos. Cambia a Starter o Growth para agregar más.`
+      );
+      return;
+    }
+    setSelected(null);
+    setOpen(true);
+  };
 
   const handleDelete = async () => {
     if (!toDelete) return;
@@ -82,14 +98,15 @@ export function ProductsManager({
           <h1 className="font-heading text-4xl font-semibold">Productos</h1>
           <p className="mt-1 text-muted-foreground">
             Sube productos para venta o para incluirlos en paquetes.
+            {productLimit !== null && (
+              <>
+                {" "}
+                Plan Free: {counts.all}/{productLimit} productos.
+              </>
+            )}
           </p>
         </div>
-        <Button
-          onClick={() => {
-            setSelected(null);
-            setOpen(true);
-          }}
-        >
+        <Button onClick={openCreate} disabled={atLimit}>
           <Plus data-icon="inline-start" />
           Nuevo producto
         </Button>
@@ -109,11 +126,8 @@ export function ProductsManager({
         <EmptyState
           title="Aún no hay productos"
           description="Crea tu primer producto con nombre, precio y una foto opcional."
-          actionLabel="Crear producto"
-          onAction={() => {
-            setSelected(null);
-            setOpen(true);
-          }}
+          actionLabel={atLimit ? undefined : "Crear producto"}
+          onAction={atLimit ? undefined : openCreate}
         />
       ) : products.length === 0 ? (
         <EmptyState

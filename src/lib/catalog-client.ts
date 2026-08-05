@@ -1,5 +1,7 @@
 import { getCurrentCenter } from "@/lib/catalog";
-import { isModuleEnabled, parseCenterModules } from "@/lib/modules";
+import { parseCenterModules } from "@/lib/modules";
+import { canUseModule } from "@/lib/plan-modules";
+import { getCurrentPlanAllowed } from "@/lib/plans";
 import { createClient } from "@/lib/supabase/client";
 import type { Package, Product, Service } from "@/types/database";
 
@@ -20,8 +22,9 @@ export async function fetchSellableCatalog(): Promise<SellableCatalog> {
   const supabase = createClient();
   const center = await getCurrentCenter();
   const modules = parseCenterModules(center?.modules);
-  const servicesEnabled = isModuleEnabled(modules, "services");
-  const packagesEnabled = isModuleEnabled(modules, "packages");
+  const planAllowed = await getCurrentPlanAllowed();
+  const servicesEnabled = canUseModule(modules, planAllowed, "services");
+  const packagesEnabled = canUseModule(modules, planAllowed, "packages");
 
   const [productsRes, servicesRes, packagesRes] = await Promise.all([
     supabase.from("products").select("*").order("name"),

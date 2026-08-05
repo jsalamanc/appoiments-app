@@ -113,3 +113,38 @@
     font-family: var(--font-display), serif;
   }
 }
+
+@media print {
+  @page {
+    margin: 1.2cm;
+  }
+
+  body {
+    background: white !important;
+    color: black !important;
+  }
+
+  .print-hidden {
+    display: none !important;
+  }
+
+  aside,
+  [data-slot="sheet"] {
+    display: none !important;
+  }
+
+  .flex.h-dvh {
+    display: block !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  main {
+    overflow: visible !important;
+  }
+
+  a {
+    text-decoration: none !important;
+    color: inherit !important;
+  }
+}

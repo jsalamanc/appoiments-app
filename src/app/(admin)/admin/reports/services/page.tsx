@@ -1,4 +1,5 @@
 import { ModuleGate } from "@/components/admin/module-gate";
+import { OwnerGate } from "@/components/admin/owner-gate";
 import { ReportsServices } from "@/components/admin/reports-services";
 import { getReportPeriod, getTopServicesReport } from "@/lib/reports-server";
 
@@ -12,14 +13,16 @@ export default async function ReportsServicesPage({ searchParams }: PageProps) {
   const data = await getTopServicesReport(period);
 
   return (
-    <ModuleGate module="services">
-      <ReportsServices
-        period={data.period}
-        salesCount={data.salesCount}
-        totalRevenue={data.totalRevenue}
-        averageTicket={data.averageTicket}
-        rows={data.rows}
-      />
-    </ModuleGate>
+    <OwnerGate>
+      <ModuleGate module="reports">
+        <ReportsServices
+          period={data.period}
+          salesCount={data.salesCount}
+          totalRevenue={data.totalRevenue}
+          averageTicket={data.averageTicket}
+          rows={data.rows}
+        />
+      </ModuleGate>
+    </OwnerGate>
   );
 }

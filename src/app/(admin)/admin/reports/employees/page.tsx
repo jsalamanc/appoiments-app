@@ -1,4 +1,5 @@
 import { ModuleGate } from "@/components/admin/module-gate";
+import { OwnerGate } from "@/components/admin/owner-gate";
 import { ReportsEmployees } from "@/components/admin/reports-employees";
 import {
   getEmployeePerformance,
@@ -15,8 +16,10 @@ export default async function ReportsEmployeesPage({ searchParams }: PageProps) 
   const data = await getEmployeePerformance(period);
 
   return (
-    <ModuleGate module="appointments">
-      <ReportsEmployees period={data.period} rows={data.rows} />
-    </ModuleGate>
+    <OwnerGate>
+      <ModuleGate module="reports">
+        <ReportsEmployees period={data.period} rows={data.rows} />
+      </ModuleGate>
+    </OwnerGate>
   );
 }

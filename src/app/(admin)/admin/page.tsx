@@ -17,13 +17,10 @@ import { RevenueMetrics } from "@/components/admin/revenue-metrics";
 import { FadeIn, StaggerChildren, StaggerItem } from "@/components/motion/fade-in";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  isModuleEnabled,
-  parseCenterModules,
-  type ModuleKey,
-} from "@/lib/modules";
+import { parseCenterModules, type ModuleKey } from "@/lib/modules";
+import { canUseModule } from "@/lib/plan-modules";
 import { getRevenueMetrics } from "@/lib/sales-server";
-import { getServerCenter } from "@/lib/supabase/center";
+import { getServerCenterContext } from "@/lib/supabase/center";
 import { createClient } from "@/lib/supabase/server";
 import { cn } from "@/lib/utils";
 
@@ -38,22 +35,25 @@ type StatCard = {
 
 export default async function AdminDashboardPage() {
   const supabase = await createClient();
-  const center = await getServerCenter();
+  const ctx = await getServerCenterContext();
+  const center = ctx?.center ?? null;
   const modules = parseCenterModules(center?.modules);
+  const planAllowed = ctx?.planAllowed;
+  const usable = (key: ModuleKey) => canUseModule(modules, planAllowed, key);
 
   const [products, services, packages, employees, appointments, revenue] =
     await Promise.all([
       supabase.from("products").select("id", { count: "exact", head: true }),
-      isModuleEnabled(modules, "services")
+      usable("services")
         ? supabase.from("services").select("id", { count: "exact", head: true })
         : Promise.resolve({ count: 0 }),
-      isModuleEnabled(modules, "packages")
+      usable("packages")
         ? supabase.from("packages").select("id", { count: "exact", head: true })
         : Promise.resolve({ count: 0 }),
-      isModuleEnabled(modules, "employees")
+      usable("employees")
         ? supabase.from("employees").select("id", { count: "exact", head: true })
         : Promise.resolve({ count: 0 }),
-      isModuleEnabled(modules, "appointments")
+      usable("appointments")
         ? supabase
             .from("appointments")
             .select("id", { count: "exact", head: true })
@@ -148,7 +148,7 @@ export default async function AdminDashboardPage() {
           <PackageOpen data-icon="inline-start" />
           Inventario
         </Button>
-        {isModuleEnabled(modules, "appointments") && (
+        {usable("appointments") && (
           <Button
             variant="outline"
             render={<Link href="/admin/appointments/today" />}
@@ -169,8 +169,7 @@ export default async function AdminDashboardPage() {
       <StaggerChildren className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {stats.map((stat) => {
           const Icon = stat.icon;
-          const enabled =
-            !stat.module || isModuleEnabled(modules, stat.module);
+          const enabled = !stat.module || usable(stat.module);
           const href = enabled ? stat.href : "/admin/settings";
 
           return (

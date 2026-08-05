@@ -24,6 +24,7 @@ import {
   uploadCatalogImage,
 } from "@/lib/catalog";
 import { setProductStock } from "@/lib/inventory";
+import { assertCanCreateProduct } from "@/lib/plans";
 import { createClient } from "@/lib/supabase/client";
 import { productSchema, type ProductValues } from "@/lib/validations";
 import type { Product } from "@/types/database";
@@ -110,6 +111,8 @@ export function ProductFormDialog({
             : "Producto guardado como borrador"
         );
       } else {
+        await assertCanCreateProduct();
+
         const { data: created, error } = await supabase
           .from("products")
           .insert({
@@ -119,7 +122,7 @@ export function ProductFormDialog({
           })
           .select("id")
           .single();
-        if (error) throw error;
+        if (error) throw new Error(error.message);
 
         if (values.stock > 0) {
           await setProductStock(created.id, values.stock, "Alta de producto");

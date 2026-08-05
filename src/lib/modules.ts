@@ -1,4 +1,9 @@
 import { getCurrentCenter } from "@/lib/catalog";
+import {
+  clampModulesToPlan,
+  isModuleAllowedByPlan,
+  parseAllowedModules,
+} from "@/lib/plan-modules";
 import { createClient } from "@/lib/supabase/client";
 import type { Center, Json } from "@/types/database";
 
@@ -6,7 +11,9 @@ export type ModuleKey =
   | "employees"
   | "appointments"
   | "services"
-  | "packages";
+  | "packages"
+  | "public_booking"
+  | "reports";
 
 export type CenterModules = Record<ModuleKey, boolean>;
 
@@ -15,6 +22,8 @@ export const MODULE_KEYS: ModuleKey[] = [
   "employees",
   "services",
   "packages",
+  "public_booking",
+  "reports",
 ];
 
 export const MODULE_META: Record<
@@ -39,6 +48,16 @@ export const MODULE_META: Record<
     label: "Paquetes",
     description: "Combos de productos y servicios a precio especial.",
   },
+  public_booking: {
+    label: "Portal de reservas",
+    description:
+      "Página pública para que los clientes agenden solos. Activa Agenda y Servicios.",
+  },
+  reports: {
+    label: "Reportes",
+    description:
+      "Rendimiento por empleado, servicios/ticket, no-shows y exportes.",
+  },
 };
 
 export const DEFAULT_MODULES: CenterModules = {
@@ -46,6 +65,8 @@ export const DEFAULT_MODULES: CenterModules = {
   appointments: false,
   services: false,
   packages: false,
+  public_booking: false,
+  reports: false,
 };
 
 /** href de navegación → módulo requerido (null = siempre visible). */
@@ -63,6 +84,9 @@ export const MODULE_NAV: Record<string, ModuleKey | null> = {
   "/admin/employees": "employees",
   "/admin/services": "services",
   "/admin/packages": "packages",
+  "/admin/reports/employees": "reports",
+  "/admin/reports/services": "reports",
+  "/admin/reports/no-shows": "reports",
 };
 
 export function parseCenterModules(
@@ -78,6 +102,8 @@ export function parseCenterModules(
     appointments: Boolean(raw.appointments),
     services: Boolean(raw.services),
     packages: Boolean(raw.packages),
+    public_booking: Boolean(raw.public_booking),
+    reports: Boolean(raw.reports),
   };
 }
 
@@ -89,14 +115,24 @@ export function isModuleEnabled(
 }
 
 /**
- * Aplica reglas Agenda ↔ Empleados:
+ * Reglas de dependencias:
  * - appointments ON ⇒ employees ON
- * - employees OFF ⇒ appointments OFF
+ * - employees OFF ⇒ appointments OFF (y public_booking OFF)
+ * - public_booking ON ⇒ appointments + services (+ employees)
+ * - appointments OFF o services OFF ⇒ public_booking OFF
  */
 export function normalizeModules(input: CenterModules): CenterModules {
   const next = { ...input };
   if (next.appointments) next.employees = true;
   if (!next.employees) next.appointments = false;
+  if (next.public_booking) {
+    next.appointments = true;
+    next.services = true;
+    next.employees = true;
+  }
+  if (!next.appointments || !next.services) {
+    next.public_booking = false;
+  }
   return next;
 }
 
@@ -114,10 +150,21 @@ export function toggleModule(
   if (key === "employees" && !enabled) {
     next.employees = false;
     next.appointments = false;
+    next.public_booking = false;
   }
   if (key === "appointments" && !enabled) {
     next.appointments = false;
-    // employees permanece como estaba (puede seguir true)
+    next.public_booking = false;
+  }
+  if (key === "services" && !enabled) {
+    next.services = false;
+    next.public_booking = false;
+  }
+  if (key === "public_booking" && enabled) {
+    next.public_booking = true;
+    next.appointments = true;
+    next.services = true;
+    next.employees = true;
   }
   return normalizeModules(next);
 }
@@ -127,7 +174,28 @@ export async function updateCenterModules(modules: CenterModules) {
   const center = await getCurrentCenter();
   if (!center) throw new Error("No se encontró el centro");
 
-  const normalized = normalizeModules(modules);
+  const { data: plan, error: planError } = await supabase
+    .from("plans")
+    .select("id, allowed_modules")
+    .eq("id", center.plan_id)
+    .maybeSingle();
+
+  if (planError) throw new Error(planError.message);
+
+  const allowed = parseAllowedModules(
+    plan?.allowed_modules,
+    plan?.id ?? center.plan_id
+  );
+
+  for (const key of MODULE_KEYS) {
+    if (modules[key] && !isModuleAllowedByPlan(allowed, key)) {
+      throw new Error(
+        `${MODULE_META[key].label} no está incluido en tu plan. Cambia de plan en Ajustes.`
+      );
+    }
+  }
+
+  const normalized = clampModulesToPlan(normalizeModules(modules), allowed);
   const { data, error } = await supabase
     .from("centers")
     .update({ modules: normalized as Center["modules"] })

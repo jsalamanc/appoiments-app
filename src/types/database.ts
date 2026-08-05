@@ -20,8 +20,10 @@ export type Database = {
             appointments: boolean;
             services: boolean;
             packages: boolean;
+            public_booking: boolean;
+            reports: boolean;
           };
-          plan_id: string | null;
+          plan_id: string;
           created_at: string;
           updated_at: string;
         };
@@ -35,8 +37,10 @@ export type Database = {
             appointments: boolean;
             services: boolean;
             packages: boolean;
+            public_booking: boolean;
+            reports: boolean;
           };
-          plan_id?: string | null;
+          plan_id?: string;
           created_at?: string;
           updated_at?: string;
         };
@@ -50,10 +54,135 @@ export type Database = {
             appointments: boolean;
             services: boolean;
             packages: boolean;
+            public_booking: boolean;
+            reports: boolean;
           };
-          plan_id?: string | null;
+          plan_id?: string;
           created_at?: string;
           updated_at?: string;
+        };
+        Relationships: [];
+      };
+      plans: {
+        Row: {
+          id: string;
+          name: string;
+          price_cents: number;
+          currency: string;
+          benefits: Json;
+          allowed_modules: {
+            employees: boolean;
+            appointments: boolean;
+            services: boolean;
+            packages: boolean;
+            public_booking: boolean;
+            reports: boolean;
+          };
+          max_products: number | null;
+          sort_order: number;
+          active: boolean;
+          created_at: string;
+        };
+        Insert: {
+          id: string;
+          name: string;
+          price_cents?: number;
+          currency?: string;
+          benefits?: Json;
+          allowed_modules?: {
+            employees: boolean;
+            appointments: boolean;
+            services: boolean;
+            packages: boolean;
+            public_booking: boolean;
+            reports: boolean;
+          };
+          max_products?: number | null;
+          sort_order?: number;
+          active?: boolean;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          name?: string;
+          price_cents?: number;
+          currency?: string;
+          benefits?: Json;
+          allowed_modules?: {
+            employees: boolean;
+            appointments: boolean;
+            services: boolean;
+            packages: boolean;
+            public_booking: boolean;
+            reports: boolean;
+          };
+          max_products?: number | null;
+          sort_order?: number;
+          active?: boolean;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
+      center_members: {
+        Row: {
+          id: string;
+          center_id: string;
+          user_id: string;
+          role: "owner" | "reception";
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          center_id: string;
+          user_id: string;
+          role: "owner" | "reception";
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          center_id?: string;
+          user_id?: string;
+          role?: "owner" | "reception";
+          created_at?: string;
+        };
+        Relationships: [];
+      };
+      center_invites: {
+        Row: {
+          id: string;
+          center_id: string;
+          email: string | null;
+          token: string;
+          role: "reception";
+          created_by: string;
+          expires_at: string;
+          accepted_at: string | null;
+          accepted_by: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          center_id: string;
+          email?: string | null;
+          token: string;
+          role?: "reception";
+          created_by: string;
+          expires_at?: string;
+          accepted_at?: string | null;
+          accepted_by?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          center_id?: string;
+          email?: string | null;
+          token?: string;
+          role?: "reception";
+          created_by?: string;
+          expires_at?: string;
+          accepted_at?: string | null;
+          accepted_by?: string | null;
+          created_at?: string;
         };
         Relationships: [];
       };
@@ -424,6 +553,63 @@ export type Database = {
         Args: Record<string, never>;
         Returns: string;
       };
+      current_member_role: {
+        Args: Record<string, never>;
+        Returns: string;
+      };
+      is_center_owner: {
+        Args: Record<string, never>;
+        Returns: boolean;
+      };
+      create_center_invite: {
+        Args: { p_email?: string | null };
+        Returns: {
+          id: string;
+          token: string;
+          expires_at: string;
+        }[];
+      };
+      revoke_center_member: {
+        Args: { p_member_id: string };
+        Returns: undefined;
+      };
+      get_invite_preview: {
+        Args: { p_token: string };
+        Returns: {
+          center_name: string;
+          email: string | null;
+          role: string;
+          expires_at: string;
+          valid: boolean;
+        }[];
+      };
+      get_public_booking_catalog: {
+        Args: { p_slug: string };
+        Returns: Json;
+      };
+      get_public_busy_ranges: {
+        Args: {
+          p_slug: string;
+          p_employee_id: string;
+          p_from: string;
+          p_to: string;
+        };
+        Returns: Json;
+      };
+      create_public_booking: {
+        Args: {
+          p_slug: string;
+          p_employee_id: string;
+          p_service_id: string;
+          p_starts_at: string;
+          p_customer_name: string;
+          p_customer_email: string;
+          p_customer_phone: string;
+          p_customer_document: string;
+          p_notes?: string | null;
+        };
+        Returns: string;
+      };
       set_product_stock: {
         Args: {
           p_product_id: string;
@@ -468,6 +654,11 @@ export type Database = {
 };
 
 export type Center = Database["public"]["Tables"]["centers"]["Row"];
+export type Plan = Database["public"]["Tables"]["plans"]["Row"];
+export type PlanId = "free" | "starter" | "growth";
+export type CenterMember = Database["public"]["Tables"]["center_members"]["Row"];
+export type CenterInvite = Database["public"]["Tables"]["center_invites"]["Row"];
+export type MemberRole = CenterMember["role"];
 export type Product = Database["public"]["Tables"]["products"]["Row"];
 export type Service = Database["public"]["Tables"]["services"]["Row"];
 export type Package = Database["public"]["Tables"]["packages"]["Row"];

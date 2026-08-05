@@ -26,6 +26,17 @@ export const registerSchema = z
     path: ["confirmPassword"],
   });
 
+export const registerInviteSchema = z
+  .object({
+    email: z.email("Ingresa un correo válido"),
+    password: z.string().min(6, "Mínimo 6 caracteres"),
+    confirmPassword: z.string().min(6, "Confirma tu contraseña"),
+  })
+  .refine((data) => data.password === data.confirmPassword, {
+    message: "Las contraseñas no coinciden",
+    path: ["confirmPassword"],
+  });
+
 export const catalogStatusSchema = z.enum(["draft", "published"]);
 
 export const productSchema = z.object({

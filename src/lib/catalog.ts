@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/client";
+import type { Center, MemberRole } from "@/types/database";
 
 const CATALOG_PUBLIC_MARKER = "/object/public/catalog/";
 
@@ -67,6 +68,14 @@ export async function deleteCatalogImage(
   }
 }
 
+function isMissingMembersTable(error: { code?: string; message?: string } | null) {
+  if (!error) return false;
+  return (
+    error.code === "PGRST205" ||
+    error.message?.includes("center_members") === true
+  );
+}
+
 export async function getCurrentCenter() {
   const supabase = createClient();
   const {
@@ -76,11 +85,48 @@ export async function getCurrentCenter() {
   if (!user) return null;
 
   const { data, error } = await supabase
+    .from("center_members")
+    .select("centers (*)")
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (error) {
+    if (isMissingMembersTable(error)) {
+      const { data: center, error: ownerError } = await supabase
+        .from("centers")
+        .select("*")
+        .eq("owner_id", user.id)
+        .maybeSingle();
+      if (ownerError) throw new Error(ownerError.message);
+      return center;
+    }
+    throw new Error(error.message);
+  }
+
+  if (data?.centers) return data.centers as unknown as Center;
+
+  const { data: center, error: ownerError } = await supabase
     .from("centers")
     .select("*")
     .eq("owner_id", user.id)
     .maybeSingle();
+  if (ownerError) throw new Error(ownerError.message);
+  return center;
+}
 
-  if (error) throw error;
-  return data;
+export async function getCurrentMemberRole(): Promise<MemberRole | null> {
+  const supabase = createClient();
+  const { data, error } = await supabase.rpc("current_member_role");
+  if (error) {
+    if (
+      error.code === "PGRST202" ||
+      error.message?.includes("current_member_role")
+    ) {
+      const center = await getCurrentCenter();
+      return center ? "owner" : null;
+    }
+    throw new Error(error.message);
+  }
+  if (data === "owner" || data === "reception") return data;
+  return null;
 }
