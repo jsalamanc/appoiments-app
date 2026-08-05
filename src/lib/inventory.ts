@@ -1,5 +1,8 @@
 import { createClient } from "@/lib/supabase/client";
 
+/** Productos con stock menor o igual se consideran “stock bajo”. */
+export const LOW_STOCK_THRESHOLD = 5;
+
 /** Ajusta el stock de un producto y registra movimiento (initial/adjustment). */
 export async function setProductStock(
   productId: string,

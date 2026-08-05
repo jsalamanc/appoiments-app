@@ -1,11 +1,15 @@
 import Link from "next/link";
 import {
+  Banknote,
+  CalendarClock,
   CalendarDays,
   History,
   Package,
+  PackageOpen,
   Receipt,
   ShoppingBag,
   Sparkles,
+  UserRound,
   Users,
 } from "lucide-react";
 
@@ -129,12 +133,36 @@ export default async function AdminDashboardPage() {
           <Receipt data-icon="inline-start" />
           Nueva venta
         </Button>
-        <Button variant="outline" render={<Link href="/admin/sales/history" />}>
+        <Button variant="outline" render={<Link href="/admin/sales/cash" />}>
+          <Banknote data-icon="inline-start" />
+          Caja del día
+        </Button>
+        <Button variant="outline" render={<Link href="/admin/customers" />}>
+          <UserRound data-icon="inline-start" />
+          Clientes
+        </Button>
+        <Button
+          variant="outline"
+          render={<Link href="/admin/products/inventory" />}
+        >
+          <PackageOpen data-icon="inline-start" />
+          Inventario
+        </Button>
+        {isModuleEnabled(modules, "appointments") && (
+          <Button
+            variant="outline"
+            render={<Link href="/admin/appointments/today" />}
+          >
+            <CalendarClock data-icon="inline-start" />
+            Citas de hoy
+          </Button>
+        )}
+        <Button variant="ghost" render={<Link href="/admin/sales/history" />}>
           <History data-icon="inline-start" />
           Historial
         </Button>
         <Button variant="ghost" render={<Link href="/admin/settings" />}>
-          Ajustes de módulos
+          Ajustes
         </Button>
       </FadeIn>
 

@@ -2,16 +2,20 @@
 
 import { motion } from "framer-motion";
 import {
+  Banknote,
+  CalendarClock,
   CalendarDays,
   History,
   LayoutDashboard,
   LogOut,
   Menu,
   Package,
+  PackageOpen,
   Receipt,
   Settings,
   ShoppingBag,
   Sparkles,
+  UserRound,
   Users,
 } from "lucide-react";
 import Link from "next/link";
@@ -46,6 +50,13 @@ type NavLink = {
 const links: NavLink[] = [
   { href: "/admin", label: "Panel", icon: LayoutDashboard, exact: true },
   {
+    href: "/admin/appointments/today",
+    label: "Hoy",
+    icon: CalendarClock,
+    exact: true,
+    module: "appointments",
+  },
+  {
     href: "/admin/appointments",
     label: "Agenda",
     icon: CalendarDays,
@@ -54,15 +65,48 @@ const links: NavLink[] = [
   },
   { href: "/admin/sales", label: "Nueva venta", icon: Receipt, exact: true },
   {
+    href: "/admin/sales/cash",
+    label: "Caja del día",
+    icon: Banknote,
+    exact: true,
+  },
+  {
     href: "/admin/sales/history",
     label: "Historial",
     icon: History,
     exact: true,
   },
-  { href: "/admin/employees", label: "Empleados", icon: Users, module: "employees" },
-  { href: "/admin/products", label: "Productos", icon: ShoppingBag },
-  { href: "/admin/services", label: "Servicios", icon: Sparkles, module: "services" },
-  { href: "/admin/packages", label: "Paquetes", icon: Package, module: "packages" },
+  { href: "/admin/customers", label: "Clientes", icon: UserRound },
+  {
+    href: "/admin/employees",
+    label: "Empleados",
+    icon: Users,
+    module: "employees",
+  },
+  {
+    href: "/admin/products",
+    label: "Productos",
+    icon: ShoppingBag,
+    exact: true,
+  },
+  {
+    href: "/admin/products/inventory",
+    label: "Inventario",
+    icon: PackageOpen,
+    exact: true,
+  },
+  {
+    href: "/admin/services",
+    label: "Servicios",
+    icon: Sparkles,
+    module: "services",
+  },
+  {
+    href: "/admin/packages",
+    label: "Paquetes",
+    icon: Package,
+    module: "packages",
+  },
   { href: "/admin/settings", label: "Ajustes", icon: Settings },
 ];
 

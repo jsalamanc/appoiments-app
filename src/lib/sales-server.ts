@@ -84,6 +84,40 @@ export async function getRevenueMetrics() {
   };
 }
 
+export async function getCashDaySummary() {
+  const supabase = await createClient();
+  const dayRange = getPeriodRange("day");
+
+  const { data, error } = await supabase
+    .from("sales")
+    .select(
+      `
+      *,
+      customers ( id, name, email, phone, document ),
+      sale_items ( * )
+    `
+    )
+    .gte("sold_at", dayRange.from)
+    .order("sold_at", { ascending: false });
+
+  if (error) throw error;
+
+  const sales = (data as unknown as SaleWithDetails[] | null) ?? [];
+  const paymentRows = sales.map((sale) => ({
+    total: Number(sale.total),
+    payment_method: sale.payment_method,
+  }));
+  const payments = paymentBreakdown(paymentRows);
+
+  return {
+    sales,
+    salesCount: sales.length,
+    totalRevenue: sumTotals(paymentRows),
+    payments,
+    from: dayRange.from,
+  };
+}
+
 export async function listSales(input: {
   page?: number;
   paymentMethod?: PaymentMethod | "all";

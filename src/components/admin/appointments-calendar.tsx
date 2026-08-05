@@ -201,21 +201,29 @@ export function AppointmentsCalendar() {
             Agenda por empleado y cobra al finalizar con un clic.
           </p>
         </div>
-        <Button
-          onClick={() => {
-            setSelected(null);
-            setDefaultStartsAt(nextBookableSlot());
-            setFormOpen(true);
-          }}
-          disabled={
-            activeEmployees.length === 0 ||
-            services.length === 0 ||
-            !servicesModuleEnabled
-          }
-        >
-          <Plus data-icon="inline-start" />
-          Nueva cita
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            render={<Link href="/admin/appointments/today" />}
+          >
+            Ver hoy
+          </Button>
+          <Button
+            onClick={() => {
+              setSelected(null);
+              setDefaultStartsAt(nextBookableSlot());
+              setFormOpen(true);
+            }}
+            disabled={
+              activeEmployees.length === 0 ||
+              services.length === 0 ||
+              !servicesModuleEnabled
+            }
+          >
+            <Plus data-icon="inline-start" />
+            Nueva cita
+          </Button>
+        </div>
       </FadeIn>
 
       {activeEmployees.length === 0 && (
