@@ -1,0 +1,138 @@
+import { createClient } from "@/lib/supabase/client";
+import type {
+  AppointmentStatus,
+  AppointmentWithDetails,
+} from "@/types/database";
+
+export function startOfWeek(date: Date) {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  const day = d.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  d.setDate(d.getDate() + diff);
+  return d;
+}
+
+export function addDays(date: Date, days: number) {
+  const d = new Date(date);
+  d.setDate(d.getDate() + days);
+  return d;
+}
+
+export function endOfWeek(date: Date) {
+  const start = startOfWeek(date);
+  const end = addDays(start, 7);
+  return end;
+}
+
+export function toLocalInputValue(date: Date) {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+export async function listAppointmentsInRange(input: {
+  from: string;
+  to: string;
+  employeeId?: string | null;
+}) {
+  const supabase = createClient();
+  let query = supabase
+    .from("appointments")
+    .select(
+      `
+      *,
+      employees ( id, name, color, active ),
+      customers ( id, name, email, phone, document ),
+      services ( id, name, price, duration_minutes, status )
+    `
+    )
+    .gte("starts_at", input.from)
+    .lt("starts_at", input.to)
+    .order("starts_at", { ascending: true });
+
+  if (input.employeeId) {
+    query = query.eq("employee_id", input.employeeId);
+  }
+
+  const { data, error } = await query;
+  if (error) throw error;
+  return (data ?? []) as unknown as AppointmentWithDetails[];
+}
+
+export async function createAppointment(input: {
+  employeeId: string;
+  customerId: string;
+  serviceId: string;
+  startsAt: string;
+  notes?: string;
+}) {
+  const supabase = createClient();
+  const { data, error } = await supabase.rpc("create_appointment", {
+    p_employee_id: input.employeeId,
+    p_customer_id: input.customerId,
+    p_service_id: input.serviceId,
+    p_starts_at: input.startsAt,
+    p_notes: input.notes ?? null,
+  });
+  if (error) throw new Error(error.message);
+  return data as string;
+}
+
+export async function updateAppointment(input: {
+  appointmentId: string;
+  employeeId: string;
+  customerId: string;
+  serviceId: string;
+  startsAt: string;
+  notes?: string;
+}) {
+  const supabase = createClient();
+  const { data, error } = await supabase.rpc("update_appointment", {
+    p_appointment_id: input.appointmentId,
+    p_employee_id: input.employeeId,
+    p_customer_id: input.customerId,
+    p_service_id: input.serviceId,
+    p_starts_at: input.startsAt,
+    p_notes: input.notes ?? null,
+  });
+  if (error) throw new Error(error.message);
+  return data as string;
+}
+
+export async function setAppointmentStatus(
+  appointmentId: string,
+  status: AppointmentStatus
+) {
+  const supabase = createClient();
+  const { error } = await supabase
+    .from("appointments")
+    .update({ status })
+    .eq("id", appointmentId);
+  if (error) throw error;
+}
+
+export async function completeAppointmentWithSale(
+  appointmentId: string,
+  saleId: string
+) {
+  const supabase = createClient();
+
+  const { error: saleError } = await supabase
+    .from("sales")
+    .update({ appointment_id: appointmentId })
+    .eq("id", saleId);
+  if (saleError) throw saleError;
+
+  const { error: apptError } = await supabase
+    .from("appointments")
+    .update({ status: "completed", sale_id: saleId })
+    .eq("id", appointmentId);
+  if (apptError) throw apptError;
+}
+
+export function formatAppointmentStatus(status: AppointmentStatus) {
+  if (status === "scheduled") return "Programada";
+  if (status === "completed") return "Completada";
+  if (status === "cancelled") return "Cancelada";
+  return "No asistió";
+}
