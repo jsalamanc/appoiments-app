@@ -1,5 +1,6 @@
 # Aura Studio — Centros Estéticos
 
+
 App admin para centros estéticos: registro, login, agenda de citas, ventas e inventario.
 
 ## Stack
