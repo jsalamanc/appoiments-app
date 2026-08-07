@@ -1,8 +1,15 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Cormorant_Garamond, Nunito } from "next/font/google";
 import { Toaster } from "@/components/ui/sonner";
+import { SerwistProvider } from "@/components/pwa/serwist-provider";
 
 import "./globals.css";
+
+const APP_NAME = "Aura Studio";
+const APP_DEFAULT_TITLE = "Aura Studio — Gestión para centros estéticos";
+const APP_TITLE_TEMPLATE = "%s · Aura Studio";
+const APP_DESCRIPTION =
+  "Administra productos, servicios y paquetes de tu centro estético con elegancia.";
 
 const display = Cormorant_Garamond({
   variable: "--font-display",
@@ -17,9 +24,44 @@ const body = Nunito({
 });
 
 export const metadata: Metadata = {
-  title: "Aura Studio — Gestión para centros estéticos",
-  description:
-    "Administra productos, servicios y paquetes de tu centro estético con elegancia.",
+  applicationName: APP_NAME,
+  title: {
+    default: APP_DEFAULT_TITLE,
+    template: APP_TITLE_TEMPLATE,
+  },
+  description: APP_DESCRIPTION,
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: APP_NAME,
+  },
+  formatDetection: {
+    telephone: false,
+  },
+  openGraph: {
+    type: "website",
+    siteName: APP_NAME,
+    title: {
+      default: APP_DEFAULT_TITLE,
+      template: APP_TITLE_TEMPLATE,
+    },
+    description: APP_DESCRIPTION,
+  },
+  twitter: {
+    card: "summary",
+    title: {
+      default: APP_DEFAULT_TITLE,
+      template: APP_TITLE_TEMPLATE,
+    },
+    description: APP_DESCRIPTION,
+  },
+  icons: {
+    apple: "/icons/apple-touch-icon.png",
+  },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#b89bb8",
 };
 
 export default function RootLayout({
@@ -33,8 +75,10 @@ export default function RootLayout({
       className={`${display.variable} ${body.variable} h-full antialiased`}
     >
       <body className="flex min-h-full flex-col font-sans">
-        {children}
-        <Toaster richColors position="top-center" />
+        <SerwistProvider>
+          {children}
+          <Toaster richColors position="top-center" />
+        </SerwistProvider>
       </body>
     </html>
   );
