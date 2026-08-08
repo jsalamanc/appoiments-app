@@ -125,7 +125,7 @@ export function ServicesManager({
           <StaggerChildren className="grid gap-4 sm:grid-cols-2">
             {services.map((service) => (
               <StaggerItem key={service.id}>
-                <article className="flex overflow-hidden rounded-3xl border border-border/70 bg-card/70">
+                <article className="flex overflow-hidden rounded-3xl border border-border/70 bg-card shadow-sm">
                   <div className="relative w-28 shrink-0 bg-muted sm:w-36">
                     {service.photo_url ? (
                       <Image

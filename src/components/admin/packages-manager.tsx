@@ -137,7 +137,7 @@ export function PackagesManager({
           <StaggerChildren className="grid gap-4">
             {packages.map((pkg) => (
               <StaggerItem key={pkg.id}>
-                <article className="flex flex-col overflow-hidden rounded-3xl border border-border/70 bg-card/70 sm:flex-row">
+                <article className="flex flex-col overflow-hidden rounded-3xl border border-border/70 bg-card shadow-sm sm:flex-row">
                   <div className="relative h-40 shrink-0 bg-muted sm:h-auto sm:w-44">
                     {pkg.photo_url ? (
                       <Image

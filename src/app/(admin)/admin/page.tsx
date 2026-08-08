@@ -127,7 +127,7 @@ export default async function AdminDashboardPage() {
 
       <FadeIn
         delay={0.08}
-        className="flex flex-wrap gap-2 rounded-3xl border border-border/70 bg-card/60 p-5"
+        className="flex flex-wrap gap-2 rounded-3xl border border-border/70 bg-card shadow-sm p-5"
       >
         <Button render={<Link href="/admin/sales" />}>
           <Receipt data-icon="inline-start" />
@@ -179,7 +179,7 @@ export default async function AdminDashboardPage() {
                 className={cn(
                   "block rounded-3xl border border-border/70 p-5 transition",
                   enabled
-                    ? "bg-card/70 hover:border-primary/40 hover:bg-card"
+                    ? "bg-card shadow-sm hover:border-primary/40 hover:bg-card"
                     : "bg-muted/30 hover:border-border"
                 )}
               >

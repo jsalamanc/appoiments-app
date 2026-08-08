@@ -233,7 +233,7 @@ export function AppointmentsCalendar() {
       </FadeIn>
 
       {activeEmployees.length === 0 && (
-        <FadeIn className="rounded-3xl border border-dashed border-border bg-card/50 p-5 text-sm text-muted-foreground">
+        <FadeIn className="rounded-3xl border border-dashed border-border bg-card shadow-sm p-5 text-sm text-muted-foreground">
           Primero crea un{" "}
           <Link href="/admin/employees" className="underline">
             empleado
@@ -243,7 +243,7 @@ export function AppointmentsCalendar() {
       )}
 
       {!servicesModuleEnabled && (
-        <FadeIn className="rounded-3xl border border-dashed border-border bg-card/50 p-5 text-sm text-muted-foreground">
+        <FadeIn className="rounded-3xl border border-dashed border-border bg-card shadow-sm p-5 text-sm text-muted-foreground">
           El módulo de Servicios está apagado.{" "}
           <Link href="/admin/settings" className="underline">
             Actívalo en Ajustes
@@ -253,7 +253,7 @@ export function AppointmentsCalendar() {
       )}
 
       {servicesModuleEnabled && services.length === 0 && (
-        <FadeIn className="rounded-3xl border border-dashed border-border bg-card/50 p-5 text-sm text-muted-foreground">
+        <FadeIn className="rounded-3xl border border-dashed border-border bg-card shadow-sm p-5 text-sm text-muted-foreground">
           Publica al menos un{" "}
           <Link href="/admin/services" className="underline">
             servicio
@@ -264,7 +264,7 @@ export function AppointmentsCalendar() {
 
       <FadeIn
         delay={0.05}
-        className="flex flex-col gap-3 rounded-3xl border border-border/70 bg-card/70 p-4 sm:flex-row sm:items-center sm:justify-between"
+        className="flex flex-col gap-3 rounded-3xl border border-border/70 bg-card shadow-sm p-4 sm:flex-row sm:items-center sm:justify-between"
       >
         <div className="flex items-center gap-2">
           <Button
@@ -314,7 +314,7 @@ export function AppointmentsCalendar() {
         </div>
       </FadeIn>
 
-      <FadeIn delay={0.08} className="overflow-hidden rounded-3xl border border-border/70 bg-card/60">
+      <FadeIn delay={0.08} className="overflow-hidden rounded-3xl border border-border/70 bg-card shadow-sm">
         {loading ? (
           <p className="p-6 text-sm text-muted-foreground">Cargando agenda...</p>
         ) : (

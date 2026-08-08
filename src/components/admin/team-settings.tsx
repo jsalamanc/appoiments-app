@@ -102,7 +102,7 @@ export function TeamSettings({
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
-      <FadeIn delay={0.05} className="rounded-3xl border border-border/70 bg-card/70 p-5">
+      <FadeIn delay={0.05} className="rounded-3xl border border-border/70 bg-card shadow-sm p-5">
         <div className="mb-3 flex items-center gap-2">
           <Link2 className="size-4 text-muted-foreground" />
           <h2 className="font-heading text-2xl font-semibold">
@@ -143,7 +143,7 @@ export function TeamSettings({
         </div>
       </FadeIn>
 
-      <FadeIn delay={0.08} className="rounded-3xl border border-border/70 bg-card/70 p-5">
+      <FadeIn delay={0.08} className="rounded-3xl border border-border/70 bg-card shadow-sm p-5">
         <div className="mb-3 flex items-center gap-2">
           <UserPlus className="size-4 text-muted-foreground" />
           <h2 className="font-heading text-2xl font-semibold">Equipo</h2>

@@ -150,7 +150,7 @@ function RegisterForm() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.45 }}
-          className="w-full max-w-md rounded-3xl border border-border/80 bg-card/80 p-8 shadow-sm backdrop-blur"
+          className="w-full max-w-md rounded-3xl border border-border/80 bg-card p-8 shadow-md backdrop-blur"
         >
           <Link
             href="/"
@@ -247,7 +247,7 @@ function RegisterForm() {
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.45 }}
-        className="w-full max-w-md rounded-3xl border border-border/80 bg-card/80 p-8 shadow-sm backdrop-blur"
+        className="w-full max-w-md rounded-3xl border border-border/80 bg-card p-8 shadow-md backdrop-blur"
       >
         <Link
           href="/"

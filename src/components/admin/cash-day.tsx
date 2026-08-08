@@ -74,17 +74,17 @@ export function CashDay({
         delay={0.05}
         className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4"
       >
-        <div className="rounded-3xl border border-border/70 bg-card/70 p-5">
+        <div className="rounded-3xl border border-border/70 bg-card shadow-sm p-5">
           <p className="text-sm text-muted-foreground">Total cobrado</p>
           <p className="font-heading text-3xl font-semibold">
             {formatCurrency(totalRevenue)}
           </p>
         </div>
-        <div className="rounded-3xl border border-border/70 bg-card/70 p-5">
+        <div className="rounded-3xl border border-border/70 bg-card shadow-sm p-5">
           <p className="text-sm text-muted-foreground">Ventas</p>
           <p className="font-heading text-3xl font-semibold">{salesCount}</p>
         </div>
-        <div className="rounded-3xl border border-border/70 bg-card/70 p-5">
+        <div className="rounded-3xl border border-border/70 bg-card shadow-sm p-5">
           <p className="text-sm text-muted-foreground">Efectivo</p>
           <p className="font-heading text-3xl font-semibold">
             {formatCurrency(payments.cashRevenue)}
@@ -93,7 +93,7 @@ export function CashDay({
             {payments.cashCount} venta{payments.cashCount === 1 ? "" : "s"}
           </p>
         </div>
-        <div className="rounded-3xl border border-border/70 bg-card/70 p-5">
+        <div className="rounded-3xl border border-border/70 bg-card shadow-sm p-5">
           <p className="text-sm text-muted-foreground">Transferencia</p>
           <p className="font-heading text-3xl font-semibold">
             {formatCurrency(payments.transferRevenue)}
@@ -125,7 +125,7 @@ export function CashDay({
               key={sale.id}
               type="button"
               onClick={() => setSelected(sale)}
-              className="flex w-full flex-col gap-2 rounded-3xl border border-border/70 bg-card/70 px-4 py-3 text-left transition hover:border-primary/40 sm:flex-row sm:items-center sm:justify-between"
+              className="flex w-full flex-col gap-2 rounded-3xl border border-border/70 bg-card shadow-sm px-4 py-3 text-left transition hover:border-primary/40 sm:flex-row sm:items-center sm:justify-between"
             >
               <div>
                 <p className="font-medium">{sale.customers.name}</p>

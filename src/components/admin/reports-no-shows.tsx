@@ -82,11 +82,11 @@ export function ReportsNoShows({
       </FadeIn>
 
       <FadeIn delay={0.05} className="grid gap-4 sm:grid-cols-2">
-        <div className="rounded-3xl border border-border/70 bg-card/70 p-5">
+        <div className="rounded-3xl border border-border/70 bg-card shadow-sm p-5">
           <p className="text-sm text-muted-foreground">No-shows</p>
           <p className="font-heading text-3xl font-semibold">{noShowTotal}</p>
         </div>
-        <div className="rounded-3xl border border-border/70 bg-card/70 p-5">
+        <div className="rounded-3xl border border-border/70 bg-card shadow-sm p-5">
           <p className="text-sm text-muted-foreground">Cancelaciones</p>
           <p className="font-heading text-3xl font-semibold">
             {cancelledTotal}
@@ -101,7 +101,7 @@ export function ReportsNoShows({
         />
       ) : (
         <>
-          <FadeIn delay={0.08} className="overflow-hidden rounded-3xl border border-border/70">
+          <FadeIn delay={0.08} className="overflow-hidden rounded-3xl border border-border/70 bg-card shadow-md">
             <div className="border-b border-border/70 px-4 py-3">
               <h2 className="font-heading text-lg font-semibold">
                 Por cliente
@@ -109,7 +109,7 @@ export function ReportsNoShows({
             </div>
             <div className="overflow-x-auto">
               <table className="w-full min-w-[520px] text-left text-sm">
-                <thead className="border-b border-border/70 bg-muted/40 text-muted-foreground">
+                <thead className="border-b border-border/70 bg-black/[0.02] text-muted-foreground">
                   <tr>
                     <th className="px-4 py-3 font-medium">Cliente</th>
                     <th className="px-4 py-3 font-medium">No-show</th>
@@ -153,7 +153,7 @@ export function ReportsNoShows({
                 {recent.map((item) => (
                   <li
                     key={item.id}
-                    className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-border/70 bg-card/60 px-4 py-3 text-sm"
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-border/70 bg-card shadow-sm px-4 py-3 text-sm"
                   >
                     <div>
                       <p className="font-medium">

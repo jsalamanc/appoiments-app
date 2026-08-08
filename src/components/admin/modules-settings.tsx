@@ -82,7 +82,7 @@ export function ModulesSettings({
 
       <FadeIn
         delay={0.05}
-        className="space-y-1 rounded-3xl border border-border/70 bg-card/70 p-2"
+        className="space-y-1 rounded-3xl border border-border/70 bg-card shadow-sm p-2"
       >
         {MODULE_KEYS.map((key) => {
           const meta = MODULE_META[key];

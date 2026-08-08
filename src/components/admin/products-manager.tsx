@@ -139,7 +139,7 @@ export function ProductsManager({
           <StaggerChildren className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {products.map((product) => (
               <StaggerItem key={product.id}>
-                <article className="overflow-hidden rounded-3xl border border-border/70 bg-card/70">
+                <article className="overflow-hidden rounded-3xl border border-border/70 bg-card shadow-sm">
                   <div className="relative h-40 bg-muted">
                     {product.photo_url ? (
                       <Image

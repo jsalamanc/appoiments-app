@@ -87,7 +87,7 @@ export function CustomerDetail({
 
       <FadeIn
         delay={0.05}
-        className="rounded-3xl border border-border/70 bg-card/70 p-5"
+        className="rounded-3xl border border-border/70 bg-card shadow-sm p-5"
       >
         <div className="mb-4 flex items-center gap-2">
           <Receipt className="size-4 text-muted-foreground" />
@@ -127,7 +127,7 @@ export function CustomerDetail({
       {appointmentsEnabled && (
         <FadeIn
           delay={0.08}
-          className="rounded-3xl border border-border/70 bg-card/70 p-5"
+          className="rounded-3xl border border-border/70 bg-card shadow-sm p-5"
         >
           <div className="mb-4 flex items-center gap-2">
             <CalendarDays className="size-4 text-muted-foreground" />

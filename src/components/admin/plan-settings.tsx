@@ -67,7 +67,7 @@ export function PlanSettings({ plans, currentPlanId }: PlanSettingsProps) {
               className={`flex flex-col rounded-3xl border p-5 ${
                 active
                   ? "border-primary bg-primary/5"
-                  : "border-border/70 bg-card/70"
+                  : "border-border/70 bg-card shadow-sm"
               }`}
             >
               <div className="flex items-start justify-between gap-2">

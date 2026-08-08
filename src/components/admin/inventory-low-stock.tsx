@@ -28,7 +28,7 @@ function ProductRow({
   onEdit: (product: Product) => void;
 }) {
   return (
-    <article className="flex flex-col gap-3 rounded-3xl border border-border/70 bg-card/70 p-4 sm:flex-row sm:items-center sm:justify-between">
+    <article className="flex flex-col gap-3 rounded-3xl border border-border/70 bg-card shadow-sm p-4 sm:flex-row sm:items-center sm:justify-between">
       <div className="flex items-center gap-3">
         <div className="relative size-14 overflow-hidden rounded-2xl bg-muted">
           {product.photo_url ? (

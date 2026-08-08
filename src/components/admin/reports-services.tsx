@@ -61,17 +61,17 @@ export function ReportsServices({
       </FadeIn>
 
       <FadeIn delay={0.05} className="grid gap-4 sm:grid-cols-3">
-        <div className="rounded-3xl border border-border/70 bg-card/70 p-5">
+        <div className="rounded-3xl border border-border/70 bg-card shadow-sm p-5">
           <p className="text-sm text-muted-foreground">Ventas</p>
           <p className="font-heading text-3xl font-semibold">{salesCount}</p>
         </div>
-        <div className="rounded-3xl border border-border/70 bg-card/70 p-5">
+        <div className="rounded-3xl border border-border/70 bg-card shadow-sm p-5">
           <p className="text-sm text-muted-foreground">Ingresos</p>
           <p className="font-heading text-3xl font-semibold">
             {formatCurrency(totalRevenue)}
           </p>
         </div>
-        <div className="rounded-3xl border border-border/70 bg-card/70 p-5">
+        <div className="rounded-3xl border border-border/70 bg-card shadow-sm p-5">
           <p className="text-sm text-muted-foreground">Ticket promedio</p>
           <p className="font-heading text-3xl font-semibold">
             {formatCurrency(averageTicket)}
@@ -85,10 +85,10 @@ export function ReportsServices({
           description="Cuando cobres servicios en el POS, aparecerán aquí ordenados por cantidad."
         />
       ) : (
-        <FadeIn delay={0.08} className="overflow-hidden rounded-3xl border border-border/70">
+        <FadeIn delay={0.08} className="overflow-hidden rounded-3xl border border-border/70 bg-card shadow-md">
           <div className="overflow-x-auto">
             <table className="w-full min-w-[480px] text-left text-sm">
-              <thead className="border-b border-border/70 bg-muted/40 text-muted-foreground">
+              <thead className="border-b border-border/70 bg-black/[0.02] text-muted-foreground">
                 <tr>
                   <th className="px-4 py-3 font-medium">#</th>
                   <th className="px-4 py-3 font-medium">Servicio</th>

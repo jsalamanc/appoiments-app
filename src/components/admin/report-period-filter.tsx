@@ -16,7 +16,7 @@ export function ReportPeriodFilter({ period }: { period: RevenuePeriod }) {
   const pathname = usePathname();
 
   return (
-    <div className="print-hidden flex flex-wrap gap-1 rounded-2xl border border-border/70 bg-card/60 p-1">
+    <div className="print-hidden flex flex-wrap gap-1 rounded-2xl border border-border/70 bg-card shadow-sm p-1">
       {OPTIONS.map((option) => {
         const active = option.value === period;
         return (

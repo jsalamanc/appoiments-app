@@ -17,7 +17,7 @@ export function EmptyState({
   onAction,
 }: EmptyStateProps) {
   return (
-    <FadeIn className="flex flex-col items-center justify-center rounded-3xl border border-dashed border-border bg-card/50 px-6 py-16 text-center">
+    <FadeIn className="flex flex-col items-center justify-center rounded-3xl border border-dashed border-border bg-card shadow-sm px-6 py-16 text-center">
       <div className="mb-4 size-16 rounded-full bg-lavender/60" />
       <h3 className="font-heading text-2xl font-semibold">{title}</h3>
       <p className="mt-2 max-w-md text-muted-foreground">{description}</p>

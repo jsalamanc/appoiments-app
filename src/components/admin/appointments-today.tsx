@@ -180,7 +180,7 @@ export function AppointmentsToday() {
               return (
                 <article
                   key={appointment.id}
-                  className="rounded-3xl border border-border/70 bg-card/70 p-4"
+                  className="rounded-3xl border border-border/70 bg-card shadow-sm p-4"
                 >
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div className="space-y-1">

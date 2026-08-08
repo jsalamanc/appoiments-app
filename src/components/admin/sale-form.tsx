@@ -431,7 +431,7 @@ export function SaleForm({ prefill }: { prefill?: SaleFormPrefill }) {
       </FadeIn>
 
       {catalogLoading && (
-        <FadeIn className="rounded-3xl border border-dashed border-border bg-card/50 p-6 text-sm text-muted-foreground">
+        <FadeIn className="rounded-3xl border border-dashed border-border bg-card shadow-sm p-6 text-sm text-muted-foreground">
           Cargando catálogo publicado...
         </FadeIn>
       )}
@@ -443,7 +443,7 @@ export function SaleForm({ prefill }: { prefill?: SaleFormPrefill }) {
       )}
 
       {!catalogLoading && !canSell && (
-        <FadeIn className="rounded-3xl border border-dashed border-border bg-card/50 p-6 text-sm text-muted-foreground">
+        <FadeIn className="rounded-3xl border border-dashed border-border bg-card shadow-sm p-6 text-sm text-muted-foreground">
           {totalCount === 0 ? (
             <>
               Aún no tienes productos, servicios o paquetes.{" "}
@@ -464,7 +464,7 @@ export function SaleForm({ prefill }: { prefill?: SaleFormPrefill }) {
 
       <FadeIn
         delay={0.05}
-        className="space-y-4 rounded-3xl border border-border/70 bg-card/70 p-5"
+        className="space-y-4 rounded-3xl border border-border/70 bg-card shadow-sm p-5"
       >
         <div className="flex items-center justify-between gap-3">
           <h2 className="font-heading text-2xl font-semibold">1. Cliente</h2>
@@ -550,7 +550,7 @@ export function SaleForm({ prefill }: { prefill?: SaleFormPrefill }) {
 
       <FadeIn
         delay={0.1}
-        className="space-y-4 rounded-3xl border border-border/70 bg-card/70 p-5"
+        className="space-y-4 rounded-3xl border border-border/70 bg-card shadow-sm p-5"
       >
         <h2 className="font-heading text-2xl font-semibold">2. Carrito</h2>
 
@@ -803,7 +803,7 @@ export function SaleForm({ prefill }: { prefill?: SaleFormPrefill }) {
 
       <FadeIn
         delay={0.15}
-        className="space-y-4 rounded-3xl border border-border/70 bg-card/70 p-5"
+        className="space-y-4 rounded-3xl border border-border/70 bg-card shadow-sm p-5"
       >
         <h2 className="font-heading text-2xl font-semibold">3. Pago</h2>
         <div className="grid gap-3 sm:grid-cols-2">

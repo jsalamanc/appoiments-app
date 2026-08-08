@@ -102,7 +102,7 @@ export function SalesHistory({
       </FadeIn>
 
       {sales.length === 0 ? (
-        <FadeIn className="rounded-3xl border border-dashed border-border bg-card/50 px-6 py-16 text-center">
+        <FadeIn className="rounded-3xl border border-dashed border-border bg-card shadow-sm px-6 py-16 text-center">
           <h3 className="font-heading text-2xl font-semibold">
             Sin transacciones
           </h3>
@@ -121,7 +121,7 @@ export function SalesHistory({
                   className={`w-full rounded-3xl border px-4 py-4 text-left transition hover:border-primary/40 hover:bg-card ${
                     highlighted.has(sale.id)
                       ? "border-primary bg-primary/5"
-                      : "border-border/70 bg-card/70"
+                      : "border-border/70 bg-card shadow-sm"
                   }`}
                 >
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -147,7 +147,7 @@ export function SalesHistory({
             ))}
           </StaggerChildren>
 
-          <div className="flex flex-col gap-3 rounded-2xl border border-border/70 bg-card/50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-col gap-3 rounded-2xl border border-border/70 bg-card shadow-sm px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-sm text-muted-foreground">
               Mostrando {from}–{to} de {total}
             </p>

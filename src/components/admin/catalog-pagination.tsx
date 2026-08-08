@@ -32,7 +32,7 @@ export function CatalogPagination({
   const nextHref = buildCatalogHref(pathname, { status, page: page + 1 });
 
   return (
-    <div className="flex flex-col gap-3 rounded-2xl border border-border/70 bg-card/50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+    <div className="flex flex-col gap-3 rounded-2xl border border-border/70 bg-card shadow-sm px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
       <p className="text-sm text-muted-foreground">
         Mostrando {from}–{to} de {total}
       </p>

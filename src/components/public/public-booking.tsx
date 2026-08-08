@@ -175,7 +175,7 @@ export function PublicBooking({ slug }: { slug: string }) {
   if (step === "done" && service && employee && startsAt) {
     return (
       <main className="mx-auto min-h-screen max-w-2xl px-4 py-12">
-        <FadeIn className="rounded-3xl border border-border/70 bg-card/80 p-8 text-center">
+        <FadeIn className="rounded-3xl border border-border/70 bg-card shadow-sm p-8 text-center">
           <p className="text-sm text-muted-foreground">{catalog.center.name}</p>
           <h1 className="mt-2 font-heading text-4xl font-semibold">
             ¡Reserva confirmada!
@@ -219,7 +219,7 @@ export function PublicBooking({ slug }: { slug: string }) {
                       setStartsAt(null);
                       setStep("employee");
                     }}
-                    className="w-full rounded-3xl border border-border/70 bg-card/70 p-4 text-left transition hover:border-primary/40"
+                    className="w-full rounded-3xl border border-border/70 bg-card shadow-sm p-4 text-left transition hover:border-primary/40"
                   >
                     <p className="font-heading text-xl font-semibold">
                       {item.name}
@@ -254,7 +254,7 @@ export function PublicBooking({ slug }: { slug: string }) {
                       setStartsAt(null);
                       setStep("slot");
                     }}
-                    className="flex w-full items-center gap-3 rounded-3xl border border-border/70 bg-card/70 p-4 text-left transition hover:border-primary/40"
+                    className="flex w-full items-center gap-3 rounded-3xl border border-border/70 bg-card shadow-sm p-4 text-left transition hover:border-primary/40"
                   >
                     <span
                       className="size-3 rounded-full"
@@ -300,7 +300,7 @@ export function PublicBooking({ slug }: { slug: string }) {
                       "shrink-0 rounded-2xl border px-3 py-2 text-sm capitalize",
                       active
                         ? "border-primary bg-primary text-primary-foreground"
-                        : "border-border/70 bg-card/70"
+                        : "border-border/70 bg-card shadow-sm"
                     )}
                   >
                     {label}
@@ -332,7 +332,7 @@ export function PublicBooking({ slug }: { slug: string }) {
                         "rounded-2xl border px-3 py-2 text-sm",
                         active
                           ? "border-primary bg-primary text-primary-foreground"
-                          : "border-border/70 bg-card/70"
+                          : "border-border/70 bg-card shadow-sm"
                       )}
                     >
                       {label}

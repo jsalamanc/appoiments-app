@@ -80,7 +80,7 @@ export function RevenueMetrics({
   return (
     <div className="space-y-4">
       <FadeIn className="grid gap-4 md:grid-cols-2">
-        <div className="rounded-3xl border border-border/70 bg-card/70 p-5">
+        <div className="rounded-3xl border border-border/70 bg-card shadow-sm p-5">
           <p className="text-sm text-muted-foreground">Ingresos totales</p>
           <p className="mt-2 font-heading text-4xl font-semibold">
             {formatCurrency(totalRevenue)}
@@ -91,7 +91,7 @@ export function RevenueMetrics({
           </p>
         </div>
 
-        <div className="rounded-3xl border border-border/70 bg-card/70 p-5">
+        <div className="rounded-3xl border border-border/70 bg-card shadow-sm p-5">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-sm text-muted-foreground">Ingresos por periodo</p>
             <div className="flex gap-1 rounded-full bg-muted/70 p-1">
@@ -123,7 +123,7 @@ export function RevenueMetrics({
 
       <FadeIn
         delay={0.06}
-        className="rounded-3xl border border-border/70 bg-card/70 p-5"
+        className="rounded-3xl border border-border/70 bg-card shadow-sm p-5"
       >
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>

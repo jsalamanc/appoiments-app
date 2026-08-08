@@ -31,7 +31,7 @@ export async function ModuleGate({ module, children }: ModuleGateProps) {
 
   return (
     <div className="mx-auto max-w-5xl">
-      <FadeIn className="rounded-3xl border border-dashed border-border bg-card/50 px-6 py-16 text-center">
+      <FadeIn className="rounded-3xl border border-dashed border-border bg-card shadow-sm px-6 py-16 text-center">
         <p className="text-sm text-muted-foreground">
           {allowedByPlan ? "Módulo inactivo" : "No incluido en tu plan"}
         </p>
