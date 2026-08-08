@@ -28,6 +28,27 @@ export async function findCustomerByEmail(
   return data;
 }
 
+export async function findCustomerByDocument(
+  document: string
+): Promise<Customer | null> {
+  const supabase = createClient();
+  const center = await getCurrentCenter();
+  if (!center) throw new Error("No se encontró el centro");
+
+  const normalized = normalizeDocument(document);
+  if (!normalized) return null;
+
+  const { data, error } = await supabase
+    .from("customers")
+    .select("*")
+    .eq("center_id", center.id)
+    .ilike("document", normalized)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data;
+}
+
 export async function findCustomerById(id: string): Promise<Customer | null> {
   const supabase = createClient();
   const center = await getCurrentCenter();
@@ -88,7 +109,7 @@ export async function ensureCustomer(input: {
   email: string;
   document: string;
 }): Promise<Customer> {
-  const existing = await findCustomerByEmail(input.email);
+  const existing = await findCustomerByDocument(input.document);
   if (existing) return existing;
   return createCustomer(input);
 }

@@ -15,8 +15,9 @@ import { completeAppointmentWithSale } from "@/lib/appointments";
 import { fetchSellableCatalog } from "@/lib/catalog-client";
 import {
   createCustomer,
-  findCustomerByEmail,
+  findCustomerByDocument,
   findCustomerById,
+  normalizeDocument,
   normalizeEmail,
 } from "@/lib/customers";
 import { formatCurrency, formatSaleItemType } from "@/lib/format";
@@ -268,33 +269,33 @@ export function SaleForm({ prefill }: { prefill?: SaleFormPrefill }) {
   }, [catalogSearch, catalogFilter]);
 
   const lookupCustomer = async () => {
-    const normalized = normalizeEmail(email);
-    if (!normalized.includes("@")) {
-      toast.error("Ingresa un correo válido");
+    const normalized = normalizeDocument(customerDocument);
+    if (normalized.length < 5) {
+      toast.error("Ingresa un documento válido (mínimo 5 caracteres)");
       return;
     }
 
     setLookingUp(true);
     try {
-      const found = await findCustomerByEmail(normalized);
+      const found = await findCustomerByDocument(normalized);
       setLookupDone(true);
-      setEmail(normalized);
+      setCustomerDocument(normalized);
 
       if (found) {
         setCustomer(found);
         setCustomerExists(true);
         setName(found.name);
         setPhone(found.phone);
-        setCustomerDocument(found.document);
+        setEmail(found.email);
         toast.success("Cliente encontrado");
       } else {
         setCustomer(null);
         setCustomerExists(false);
         setName("");
         setPhone("");
-        setCustomerDocument("");
+        setEmail("");
         toast.message("Cliente nuevo", {
-          description: "Completa nombre, teléfono y documento para crearlo.",
+          description: "Completa nombre, teléfono y correo para crearlo.",
         });
       }
     } catch (err) {
@@ -308,21 +309,22 @@ export function SaleForm({ prefill }: { prefill?: SaleFormPrefill }) {
     if (customer) return customer;
 
     if (!lookupDone) {
-      throw new Error("Primero busca el correo del cliente");
+      throw new Error("Primero busca el documento del cliente");
     }
 
-    if (!name.trim() || !phone.trim() || !customerDocument.trim()) {
-      throw new Error("Completa nombre, teléfono y documento del cliente");
+    if (!name.trim() || !phone.trim() || !email.trim()) {
+      throw new Error("Completa nombre, teléfono y correo del cliente");
     }
 
-    if (customerDocument.trim().length < 5) {
-      throw new Error("El documento debe tener al menos 5 caracteres");
+    const normalizedEmail = normalizeEmail(email);
+    if (!normalizedEmail.includes("@")) {
+      throw new Error("Ingresa un correo válido");
     }
 
     setCreatingCustomer(true);
     try {
       const created = await createCustomer({
-        email,
+        email: normalizedEmail,
         name,
         phone,
         document: customerDocument,
@@ -476,20 +478,19 @@ export function SaleForm({ prefill }: { prefill?: SaleFormPrefill }) {
 
         <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
           <div className="space-y-2">
-            <Label htmlFor="sale-email">Correo del comprador</Label>
+            <Label htmlFor="sale-document">Documento del comprador</Label>
             <Input
-              id="sale-email"
-              type="email"
-              placeholder="cliente@correo.com"
-              value={email}
+              id="sale-document"
+              placeholder="CC / CE / NIT"
+              value={customerDocument}
               onChange={(e) => {
-                setEmail(e.target.value);
+                setCustomerDocument(e.target.value);
                 setLookupDone(false);
                 setCustomer(null);
                 setCustomerExists(false);
                 setName("");
                 setPhone("");
-                setCustomerDocument("");
+                setEmail("");
               }}
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
@@ -534,13 +535,14 @@ export function SaleForm({ prefill }: { prefill?: SaleFormPrefill }) {
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="sale-document">Documento</Label>
+            <Label htmlFor="sale-email">Correo</Label>
             <Input
-              id="sale-document"
-              value={customerDocument}
+              id="sale-email"
+              type="email"
+              value={email}
               disabled={!lookupDone || customerExists}
-              onChange={(e) => setCustomerDocument(e.target.value)}
-              placeholder="CC / CE / NIT"
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="cliente@correo.com"
             />
           </div>
         </div>
