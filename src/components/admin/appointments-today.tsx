@@ -20,6 +20,9 @@ import { Input } from "@/components/ui/input";
 import {
   endOfDay,
   formatAppointmentStatus,
+  getAppointmentServiceDurationMinutes,
+  getAppointmentServiceName,
+  getAppointmentServicePrice,
   listAppointmentsInRange,
   setAppointmentStatus,
   startOfDay,
@@ -194,12 +197,23 @@ export function AppointmentsToday() {
                       </p>
                       <p className="text-sm text-muted-foreground">
                         {formatDateTime(appointment.starts_at)} ·{" "}
-                        {appointment.services.name} (
-                        {formatDuration(appointment.services.duration_minutes)})
+                        {getAppointmentServiceName(appointment)} (
+                        {formatDuration(
+                          getAppointmentServiceDurationMinutes(appointment)
+                        )}
+                        )
                       </p>
                       <p className="text-sm text-muted-foreground">
-                        {appointment.employees.name} ·{" "}
-                        {formatCurrency(Number(appointment.services.price))}
+                        {appointment.employees.name}
+                        {getAppointmentServicePrice(appointment) != null && (
+                          <>
+                            {" "}
+                            ·{" "}
+                            {formatCurrency(
+                              getAppointmentServicePrice(appointment)!
+                            )}
+                          </>
+                        )}
                       </p>
                       {appointment.notes && (
                         <p className="text-xs text-muted-foreground">
@@ -212,11 +226,16 @@ export function AppointmentsToday() {
                       <div className="flex flex-col gap-2 sm:min-w-40">
                         <Button
                           size="sm"
-                          onClick={() =>
-                            router.push(
-                              `/admin/sales?customerId=${appointment.customer_id}&serviceId=${appointment.service_id}&appointmentId=${appointment.id}`
-                            )
-                          }
+                          onClick={() => {
+                            const params = new URLSearchParams({
+                              customerId: appointment.customer_id,
+                              appointmentId: appointment.id,
+                            });
+                            if (appointment.service_id) {
+                              params.set("serviceId", appointment.service_id);
+                            }
+                            router.push(`/admin/sales?${params.toString()}`);
+                          }}
                         >
                           <Receipt data-icon="inline-start" />
                           Cobrar

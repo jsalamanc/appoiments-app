@@ -110,7 +110,7 @@ function AppointmentFormFields({
       reset({
         employee_id: appointment.employee_id,
         customer_id: appointment.customer_id,
-        service_id: appointment.service_id,
+        service_id: appointment.service_id ?? "",
         starts_at: toLocalInputValue(new Date(appointment.starts_at)),
         notes: appointment.notes ?? "",
       });

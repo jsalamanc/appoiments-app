@@ -172,3 +172,30 @@ export function formatAppointmentStatus(status: AppointmentStatus) {
   if (status === "cancelled") return "Cancelada";
   return "No asistió";
 }
+
+export function getAppointmentServiceName(appointment: AppointmentWithDetails) {
+  return (
+    appointment.services?.name ??
+    appointment.service_name_snapshot ??
+    "Servicio"
+  );
+}
+
+export function getAppointmentServiceDurationMinutes(
+  appointment: AppointmentWithDetails
+) {
+  if (appointment.services?.duration_minutes) {
+    return appointment.services.duration_minutes;
+  }
+  const ms =
+    new Date(appointment.ends_at).getTime() -
+    new Date(appointment.starts_at).getTime();
+  return Math.max(Math.round(ms / 60000), 0);
+}
+
+export function getAppointmentServicePrice(
+  appointment: AppointmentWithDetails
+) {
+  if (appointment.services?.price == null) return null;
+  return Number(appointment.services.price);
+}

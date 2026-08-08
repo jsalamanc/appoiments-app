@@ -432,7 +432,8 @@ export type Database = {
           center_id: string;
           employee_id: string;
           customer_id: string;
-          service_id: string;
+          service_id: string | null;
+          service_name_snapshot: string;
           starts_at: string;
           ends_at: string;
           status: "scheduled" | "completed" | "cancelled" | "no_show";
@@ -446,7 +447,8 @@ export type Database = {
           center_id: string;
           employee_id: string;
           customer_id: string;
-          service_id: string;
+          service_id?: string | null;
+          service_name_snapshot: string;
           starts_at: string;
           ends_at: string;
           status?: "scheduled" | "completed" | "cancelled" | "no_show";
@@ -460,7 +462,8 @@ export type Database = {
           center_id?: string;
           employee_id?: string;
           customer_id?: string;
-          service_id?: string;
+          service_id?: string | null;
+          service_name_snapshot?: string;
           starts_at?: string;
           ends_at?: string;
           status?: "scheduled" | "completed" | "cancelled" | "no_show";
@@ -690,5 +693,8 @@ export type SaleWithDetails = Sale & {
 export type AppointmentWithDetails = Appointment & {
   employees: Pick<Employee, "id" | "name" | "color" | "active">;
   customers: Pick<Customer, "id" | "name" | "email" | "phone" | "document">;
-  services: Pick<Service, "id" | "name" | "price" | "duration_minutes" | "status">;
+  services: Pick<
+    Service,
+    "id" | "name" | "price" | "duration_minutes" | "status"
+  > | null;
 };

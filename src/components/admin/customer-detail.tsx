@@ -9,7 +9,10 @@ import { CustomerFormDialog } from "@/components/admin/customer-form-dialog";
 import { FadeIn } from "@/components/motion/fade-in";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { formatAppointmentStatus } from "@/lib/appointments";
+import {
+  formatAppointmentStatus,
+  getAppointmentServiceName,
+} from "@/lib/appointments";
 import {
   formatCurrency,
   formatDateTime,
@@ -146,7 +149,7 @@ export function CustomerDetail({
                       {formatDateTime(appointment.starts_at)}
                     </p>
                     <p className="text-sm text-muted-foreground">
-                      {appointment.services.name} ·{" "}
+                      {getAppointmentServiceName(appointment)} ·{" "}
                       {appointment.employees.name}
                     </p>
                   </div>

@@ -27,6 +27,9 @@ import {
   addDays,
   endOfWeek,
   formatAppointmentStatus,
+  getAppointmentServiceDurationMinutes,
+  getAppointmentServiceName,
+  getAppointmentServicePrice,
   isPastDay,
   isPastSlot,
   listAppointmentsInRange,
@@ -433,7 +436,7 @@ export function AppointmentsCalendar() {
                             {appointment.customers.name}
                           </p>
                           <p className="truncate text-[10px] text-muted-foreground">
-                            {appointment.services.name}
+                            {getAppointmentServiceName(appointment)}
                           </p>
                         </button>
                       );
@@ -480,9 +483,11 @@ export function AppointmentsCalendar() {
                 </p>
                 <p>
                   <span className="text-muted-foreground">Servicio: </span>
-                  {detail.services.name} ·{" "}
-                  {formatCurrency(Number(detail.services.price))} ·{" "}
-                  {formatDuration(detail.services.duration_minutes)}
+                  {getAppointmentServiceName(detail)}
+                  {getAppointmentServicePrice(detail) != null && (
+                    <> · {formatCurrency(getAppointmentServicePrice(detail)!)}</>
+                  )}{" "}
+                  · {formatDuration(getAppointmentServiceDurationMinutes(detail))}
                 </p>
                 <p>
                   <span className="text-muted-foreground">Empleado: </span>
@@ -506,9 +511,14 @@ export function AppointmentsCalendar() {
                   <>
                     <Button
                       onClick={() => {
-                        router.push(
-                          `/admin/sales?customerId=${detail.customer_id}&serviceId=${detail.service_id}&appointmentId=${detail.id}`
-                        );
+                        const params = new URLSearchParams({
+                          customerId: detail.customer_id,
+                          appointmentId: detail.id,
+                        });
+                        if (detail.service_id) {
+                          params.set("serviceId", detail.service_id);
+                        }
+                        router.push(`/admin/sales?${params.toString()}`);
                       }}
                     >
                       <Receipt data-icon="inline-start" />
