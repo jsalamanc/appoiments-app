@@ -1,0 +1,41 @@
+name: PR Agent
+
+# Revisión automática de PRs con PR-Agent (OpenAI).
+# - Al abrir un PR: /describe, /review y /improve automáticos.
+# - En cualquier PR se puede comentar /review, /describe, /improve o /ask "...".
+# Solo corre para PRs desde ramas de este repo y para comentarios del dueño
+# o colaboradores, para que nadie externo gaste la API key.
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  pr_agent:
+    if: >-
+      github.event.sender.type != 'Bot' && (
+        (github.event_name == 'pull_request'
+          && github.event.pull_request.head.repo.full_name == github.repository)
+        || (github.event_name == 'issue_comment'
+          && github.event.issue.pull_request
+          && contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association))
+      )
+    runs-on: ubuntu-latest
+    steps:
+      - name: PR Agent
+        # pragent/pr-agent:0.48.0-github_action
+        uses: docker://pragent/pr-agent@sha256:80edef71baa3df28c129d858d4b53784abfc14704c235efb32b6c461d5399a6d
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENAI_KEY: ${{ secrets.OPENAI_KEY }}
+          config.response_language: "es-ES"
+          github_action_config.auto_review: "true"
+          github_action_config.auto_describe: "true"
+          github_action_config.auto_improve: "true"
