@@ -55,6 +55,7 @@ pub fn auth_login(
             other => AppError::from(other),
         })?;
 
+    drop(stmt);
     let (user, password_hash) = user_row;
 
     if !verify_password(&password, &password_hash) {
@@ -113,6 +114,7 @@ pub fn auth_resume_session(
         .query_row(params![session_token, now], row_to_user)
         .ok();
 
+    drop(stmt);
     drop(conn);
     if let Some(ref u) = user {
         *state.current_user.lock().unwrap() = Some(u.clone());
