@@ -91,41 +91,43 @@ export function TeamSettings() {
           clientes y ventas, pero no ajustes ni reportes.
         </p>
 
-        <div className="mt-4 grid gap-2 sm:grid-cols-3">
-          <div className="space-y-2">
-            <Label htmlFor="staff-name">Nombre</Label>
-            <Input
-              id="staff-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="staff-username">Usuario</Label>
-            <Input
-              id="staff-username"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="staff-password">Contraseña</Label>
-            <Input
-              id="staff-password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-          </div>
-        </div>
-        <Button
-          type="button"
-          className="mt-3"
-          disabled={creating}
-          onClick={() => void createUser()}
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void createUser();
+          }}
         >
-          {creating ? "Creando..." : "Crear usuario"}
-        </Button>
+          <div className="mt-4 grid gap-2 sm:grid-cols-3">
+            <div className="space-y-2">
+              <Label htmlFor="staff-name">Nombre</Label>
+              <Input
+                id="staff-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="staff-username">Usuario</Label>
+              <Input
+                id="staff-username"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="staff-password">Contraseña</Label>
+              <Input
+                id="staff-password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+            </div>
+          </div>
+          <Button type="submit" className="mt-3" disabled={creating}>
+            {creating ? "Creando..." : "Crear usuario"}
+          </Button>
+        </form>
 
         {loading ? (
           <p className="mt-4 text-sm text-muted-foreground">Cargando equipo...</p>

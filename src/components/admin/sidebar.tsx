@@ -35,7 +35,12 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { DEFAULT_MODULES, type CenterModules, type ModuleKey } from "@/lib/modules";
+import {
+  DEFAULT_MODULES,
+  onModulesChanged,
+  type CenterModules,
+  type ModuleKey,
+} from "@/lib/modules";
 import { isOwnerRole } from "@/lib/roles";
 import { cn } from "@/lib/utils";
 
@@ -384,18 +389,26 @@ export function AdminSidebar() {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([
-      invoke<{ name: string }>("get_business_profile"),
-      invoke<CenterModules>("get_enabled_modules"),
-      invoke<{ role: string } | null>("auth_current_user"),
-    ]).then(([profile, enabledModules, user]) => {
-      if (cancelled) return;
-      setBusinessName(profile.name);
-      setModules(enabledModules);
-      setRole(user?.role ?? null);
-    });
+
+    const load = () => {
+      Promise.all([
+        invoke<{ name: string }>("get_business_profile"),
+        invoke<CenterModules>("get_enabled_modules"),
+        invoke<{ role: string } | null>("auth_current_user"),
+      ]).then(([profile, enabledModules, user]) => {
+        if (cancelled) return;
+        setBusinessName(profile.name);
+        setModules(enabledModules);
+        setRole(user?.role ?? null);
+      });
+    };
+
+    load();
+    const unsubscribe = onModulesChanged(load);
+
     return () => {
       cancelled = true;
+      unsubscribe();
     };
   }, []);
 

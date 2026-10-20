@@ -35,6 +35,7 @@ export default function PackagesPage() {
   const [result, setResult] = useState<ListPackagesResult | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [services, setServices] = useState<Service[]>([]);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -59,7 +60,7 @@ export default function PackagesPage() {
     return () => {
       cancelled = true;
     };
-  }, [page, status]);
+  }, [page, status, reloadKey]);
 
   if (!result) return null;
 
@@ -75,6 +76,7 @@ export default function PackagesPage() {
         totalPages={result.total_pages}
         total={result.total}
         pageSize={result.page_size}
+        onRefresh={() => setReloadKey((k) => k + 1)}
       />
     </ModuleGate>
   );

@@ -3,7 +3,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { Pencil, Plus, Trash2 } from "lucide-react";
 import Image from "next/image";
-import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -33,6 +32,7 @@ type PackagesManagerProps = {
   totalPages: number;
   total: number;
   pageSize: number;
+  onRefresh: () => void;
 };
 
 function PackagePhoto({ pkg }: { pkg: PackageWithItems }) {
@@ -66,14 +66,14 @@ export function PackagesManager({
   totalPages,
   total,
   pageSize,
+  onRefresh,
 }: PackagesManagerProps) {
-  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<PackageWithItems | null>(null);
   const [toDelete, setToDelete] = useState<PackageWithItems | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  const refresh = () => router.refresh();
+  const refresh = () => onRefresh();
   const canCreate = products.length > 0 || services.length > 0;
   const hasAny = counts.all > 0;
 

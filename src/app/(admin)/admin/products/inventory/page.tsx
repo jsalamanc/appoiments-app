@@ -15,6 +15,7 @@ type LowStockResult = {
 
 export default function InventoryPage() {
   const [result, setResult] = useState<LowStockResult | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -24,7 +25,7 @@ export default function InventoryPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [reloadKey]);
 
   if (!result) return null;
 
@@ -33,6 +34,7 @@ export default function InventoryPage() {
       outOfStock={result.out_of_stock}
       lowStock={result.low_stock}
       threshold={result.threshold}
+      onRefresh={() => setReloadKey((k) => k + 1)}
     />
   );
 }

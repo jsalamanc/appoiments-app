@@ -24,6 +24,7 @@ export default function ProductsPage() {
   const status = (searchParams.get("status") as StatusFilter) ?? "all";
 
   const [result, setResult] = useState<ListResult | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -35,7 +36,7 @@ export default function ProductsPage() {
     return () => {
       cancelled = true;
     };
-  }, [page, status]);
+  }, [page, status, reloadKey]);
 
   if (!result) return null;
 
@@ -48,6 +49,7 @@ export default function ProductsPage() {
       totalPages={result.total_pages}
       total={result.total}
       pageSize={result.page_size}
+      onRefresh={() => setReloadKey((k) => k + 1)}
     />
   );
 }

@@ -113,10 +113,32 @@ export async function getEnabledModules(): Promise<CenterModules> {
   return invoke<CenterModules>("get_enabled_modules");
 }
 
+const MODULES_CHANGED_EVENT = "aura:modules-changed";
+
+/**
+ * El sidebar carga los módulos una sola vez al montar y no se vuelve a
+ * montar al navegar entre páginas de /admin (persiste en el layout), así
+ * que necesita este evento para enterarse cuando Ajustes los cambia.
+ */
+function notifyModulesChanged() {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event(MODULES_CHANGED_EVENT));
+  }
+}
+
+export function onModulesChanged(callback: () => void): () => void {
+  window.addEventListener(MODULES_CHANGED_EVENT, callback);
+  return () => window.removeEventListener(MODULES_CHANGED_EVENT, callback);
+}
+
 export async function updateCenterModules(
   modules: CenterModules
 ): Promise<CenterModules> {
-  return invoke<CenterModules>("update_enabled_modules", { modules });
+  const result = await invoke<CenterModules>("update_enabled_modules", {
+    modules,
+  });
+  notifyModulesChanged();
+  return result;
 }
 
 export function moduleForPath(pathname: string): ModuleKey | null {

@@ -132,6 +132,7 @@ pub fn get_business_profile(state: State<AppState>) -> AppResult<BusinessProfile
 
 #[tauri::command]
 pub fn update_business_profile(state: State<AppState>, name: String) -> AppResult<BusinessProfile> {
+    state.require_owner()?;
     if name.trim().is_empty() {
         return Err(AppError::validation("El nombre del negocio es obligatorio"));
     }
@@ -160,6 +161,7 @@ pub fn update_enabled_modules(
     state: State<AppState>,
     modules: ModulesFlags,
 ) -> AppResult<ModulesFlags> {
+    state.require_owner()?;
     let normalized = modules.normalize();
     let conn = state.db.lock().unwrap();
     conn.execute(

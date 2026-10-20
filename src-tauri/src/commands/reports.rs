@@ -44,6 +44,7 @@ pub fn get_employee_performance_report(
     state: State<AppState>,
     period: String,
 ) -> AppResult<EmployeePerformanceReport> {
+    state.require_owner()?;
     let conn = state.db.lock().unwrap();
     let from = period_from(&period);
 
@@ -128,6 +129,7 @@ pub fn get_top_services_report(
     state: State<AppState>,
     period: String,
 ) -> AppResult<TopServicesReport> {
+    state.require_owner()?;
     let conn = state.db.lock().unwrap();
     let from = period_from(&period);
 
@@ -237,6 +239,7 @@ pub struct NoShowsReport {
 /// tipo del frontend, pero siempre viene `Some`.
 #[tauri::command]
 pub fn get_no_shows_report(state: State<AppState>, period: String) -> AppResult<NoShowsReport> {
+    state.require_owner()?;
     let conn = state.db.lock().unwrap();
     let from = period_from(&period);
 

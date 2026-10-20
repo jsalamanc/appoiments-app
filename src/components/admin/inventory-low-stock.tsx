@@ -19,6 +19,7 @@ type InventoryLowStockProps = {
   outOfStock: Product[];
   lowStock: Product[];
   threshold: number;
+  onRefresh: () => void;
 };
 
 function ProductRow({
@@ -71,6 +72,7 @@ export function InventoryLowStock({
   outOfStock,
   lowStock,
   threshold,
+  onRefresh,
 }: InventoryLowStockProps) {
   const router = useRouter();
   const [selected, setSelected] = useState<Product | null>(null);
@@ -145,7 +147,7 @@ export function InventoryLowStock({
         open={open}
         onOpenChange={setOpen}
         product={selected}
-        onSuccess={() => router.refresh()}
+        onSuccess={onRefresh}
       />
     </div>
   );
