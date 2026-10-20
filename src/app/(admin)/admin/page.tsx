@@ -1,3 +1,6 @@
+"use client";
+
+import { invoke } from "@tauri-apps/api/core";
 import Link from "next/link";
 import {
   Banknote,
@@ -12,16 +15,13 @@ import {
   UserRound,
   Users,
 } from "lucide-react";
+import { useEffect, useState } from "react";
 
 import { RevenueMetrics } from "@/components/admin/revenue-metrics";
 import { FadeIn, StaggerChildren, StaggerItem } from "@/components/motion/fade-in";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { parseCenterModules, type ModuleKey } from "@/lib/modules";
-import { canUseModule } from "@/lib/plan-modules";
-import { getRevenueMetrics } from "@/lib/sales-server";
-import { getServerCenterContext } from "@/lib/supabase/center";
-import { createClient } from "@/lib/supabase/server";
+import { type CenterModules, type ModuleKey, DEFAULT_MODULES } from "@/lib/modules";
 import { cn } from "@/lib/utils";
 
 type StatCard = {
@@ -33,46 +33,113 @@ type StatCard = {
   module?: ModuleKey;
 };
 
-export default async function AdminDashboardPage() {
-  const supabase = await createClient();
-  const ctx = await getServerCenterContext();
-  const center = ctx?.center ?? null;
-  const modules = parseCenterModules(center?.modules);
-  const planAllowed = ctx?.planAllowed;
-  const usable = (key: ModuleKey) => canUseModule(modules, planAllowed, key);
+type PaymentBreakdown = {
+  cash_count: number;
+  transfer_count: number;
+  cash_revenue: number;
+  transfer_revenue: number;
+};
 
-  const [products, services, packages, employees, appointments, revenue] =
-    await Promise.all([
-      supabase.from("products").select("id", { count: "exact", head: true }),
-      usable("services")
-        ? supabase.from("services").select("id", { count: "exact", head: true })
-        : Promise.resolve({ count: 0 }),
-      usable("packages")
-        ? supabase.from("packages").select("id", { count: "exact", head: true })
-        : Promise.resolve({ count: 0 }),
-      usable("employees")
-        ? supabase.from("employees").select("id", { count: "exact", head: true })
-        : Promise.resolve({ count: 0 }),
-      usable("appointments")
-        ? supabase
-            .from("appointments")
-            .select("id", { count: "exact", head: true })
-            .eq("status", "scheduled")
-        : Promise.resolve({ count: 0 }),
-      getRevenueMetrics(),
-    ]);
+type RevenueMetricsData = {
+  total_revenue: number;
+  day_revenue: number;
+  week_revenue: number;
+  month_revenue: number;
+  sales_count: number;
+  payments: {
+    day: PaymentBreakdown;
+    week: PaymentBreakdown;
+    month: PaymentBreakdown;
+    all: PaymentBreakdown;
+  };
+};
+
+function toPaymentStats(p: PaymentBreakdown) {
+  return {
+    cashCount: p.cash_count,
+    transferCount: p.transfer_count,
+    cashRevenue: p.cash_revenue,
+    transferRevenue: p.transfer_revenue,
+  };
+}
+
+const FAR_PAST = "1970-01-01T00:00:00.000Z";
+const FAR_FUTURE = "2999-01-01T00:00:00.000Z";
+
+export default function AdminDashboardPage() {
+  const [businessName, setBusinessName] = useState<string | null>(null);
+  const [modules, setModules] = useState<CenterModules>(DEFAULT_MODULES);
+  const [counts, setCounts] = useState({
+    products: 0,
+    services: 0,
+    packages: 0,
+    employees: 0,
+    appointments: 0,
+  });
+  const [revenue, setRevenue] = useState<RevenueMetricsData | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      const [profile, enabledModules] = await Promise.all([
+        invoke<{ name: string }>("get_business_profile"),
+        invoke<CenterModules>("get_enabled_modules"),
+      ]);
+      if (cancelled) return;
+      setBusinessName(profile.name);
+      setModules(enabledModules);
+
+      const [products, services, packages, employees, appointments, revenueMetrics] =
+        await Promise.all([
+          invoke<{ counts: { all: number } }>("list_products", { pageSize: 1 }),
+          enabledModules.services
+            ? invoke<{ counts: { all: number } }>("list_services", { pageSize: 1 })
+            : Promise.resolve({ counts: { all: 0 } }),
+          enabledModules.packages
+            ? invoke<{ counts: { all: number } }>("list_packages", { pageSize: 1 })
+            : Promise.resolve({ counts: { all: 0 } }),
+          enabledModules.employees
+            ? invoke<unknown[]>("list_employees", {})
+            : Promise.resolve([]),
+          enabledModules.appointments
+            ? invoke<{ status: string }[]>("list_appointments_in_range", {
+                from: FAR_PAST,
+                to: FAR_FUTURE,
+              })
+            : Promise.resolve([]),
+          invoke<RevenueMetricsData>("get_revenue_metrics"),
+        ]);
+
+      if (cancelled) return;
+      setCounts({
+        products: products.counts.all,
+        services: services.counts.all,
+        packages: packages.counts.all,
+        employees: employees.length,
+        appointments: appointments.filter((a) => a.status === "scheduled").length,
+      });
+      setRevenue(revenueMetrics);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const usable = (key: ModuleKey) => modules[key];
 
   const stats: StatCard[] = [
     {
       label: "Productos",
-      count: products.count ?? 0,
+      count: counts.products,
       href: "/admin/products",
       icon: ShoppingBag,
       tone: "bg-blush/50",
     },
     {
       label: "Servicios",
-      count: services.count ?? 0,
+      count: counts.services,
       href: "/admin/services",
       icon: Sparkles,
       tone: "bg-mint/60",
@@ -80,7 +147,7 @@ export default async function AdminDashboardPage() {
     },
     {
       label: "Paquetes",
-      count: packages.count ?? 0,
+      count: counts.packages,
       href: "/admin/packages",
       icon: Package,
       tone: "bg-lavender/60",
@@ -88,7 +155,7 @@ export default async function AdminDashboardPage() {
     },
     {
       label: "Empleados",
-      count: employees.count ?? 0,
+      count: counts.employees,
       href: "/admin/employees",
       icon: Users,
       tone: "bg-cream/80",
@@ -96,7 +163,7 @@ export default async function AdminDashboardPage() {
     },
     {
       label: "Citas programadas",
-      count: appointments.count ?? 0,
+      count: counts.appointments,
       href: "/admin/appointments",
       icon: CalendarDays,
       tone: "bg-secondary/70",
@@ -109,21 +176,28 @@ export default async function AdminDashboardPage() {
       <FadeIn>
         <p className="text-sm text-muted-foreground">Panel administrativo</p>
         <h1 className="font-heading text-4xl font-semibold tracking-tight">
-          Hola, {center?.name ?? "admin"}
+          Hola, {businessName ?? "admin"}
         </h1>
         <p className="mt-2 max-w-xl text-muted-foreground">
           Administra tu catálogo, registra ventas y revisa tus ingresos.
         </p>
       </FadeIn>
 
-      <RevenueMetrics
-        totalRevenue={revenue.totalRevenue}
-        dayRevenue={revenue.dayRevenue}
-        weekRevenue={revenue.weekRevenue}
-        monthRevenue={revenue.monthRevenue}
-        salesCount={revenue.salesCount}
-        payments={revenue.payments}
-      />
+      {revenue && (
+        <RevenueMetrics
+          totalRevenue={revenue.total_revenue}
+          dayRevenue={revenue.day_revenue}
+          weekRevenue={revenue.week_revenue}
+          monthRevenue={revenue.month_revenue}
+          salesCount={revenue.sales_count}
+          payments={{
+            day: toPaymentStats(revenue.payments.day),
+            week: toPaymentStats(revenue.payments.week),
+            month: toPaymentStats(revenue.payments.month),
+            all: toPaymentStats(revenue.payments.all),
+          }}
+        />
+      )}
 
       <FadeIn
         delay={0.08}

@@ -1,6 +1,7 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
+import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
@@ -18,14 +19,6 @@ import { ImageUpload } from "@/components/ui/image-upload";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { CatalogStatus } from "@/lib/catalog-status";
-import {
-  deleteCatalogImage,
-  getCurrentCenter,
-  uploadCatalogImage,
-} from "@/lib/catalog";
-import { setProductStock } from "@/lib/inventory";
-import { assertCanCreateProduct } from "@/lib/plans";
-import { createClient } from "@/lib/supabase/client";
 import { productSchema, type ProductValues } from "@/lib/validations";
 import type { Product } from "@/types/database";
 
@@ -36,13 +29,20 @@ type ProductFormDialogProps = {
   onSuccess: () => void;
 };
 
+type ProductInputPayload = {
+  name: string;
+  price: number;
+  photoPath: string | null;
+  status: CatalogStatus;
+};
+
 export function ProductFormDialog({
   open,
   onOpenChange,
   product,
   onSuccess,
 }: ProductFormDialogProps) {
-  const [photo, setPhoto] = useState<File | null>(null);
+  const [pendingPhoto, setPendingPhoto] = useState<string | null>(null);
   const [clearPhoto, setClearPhoto] = useState(false);
   const [loading, setLoading] = useState(false);
 
@@ -68,7 +68,7 @@ export function ProductFormDialog({
         stock: product?.stock ?? 0,
         status: product?.status ?? "draft",
       });
-      setPhoto(null);
+      setPendingPhoto(null);
       setClearPhoto(false);
     }
   }, [open, product, reset]);
@@ -76,33 +76,31 @@ export function ProductFormDialog({
   const save = async (values: ProductValues) => {
     setLoading(true);
     try {
-      const supabase = createClient();
-      const center = await getCurrentCenter();
-      if (!center) throw new Error("No se encontró el centro");
-
-      const previousUrl = product?.photo_url ?? null;
-      let photoUrl = previousUrl;
-      if (clearPhoto && !photo) photoUrl = null;
-      if (photo) {
-        photoUrl = await uploadCatalogImage(center.id, photo, "products");
-      }
-
-      const payload = {
-        name: values.name,
-        price: values.price,
-        photo_url: photoUrl,
-        status: values.status,
-      };
+      const basePhotoPath = clearPhoto ? null : product?.photo_path ?? null;
 
       if (product) {
-        const { error } = await supabase
-          .from("products")
-          .update(payload)
-          .eq("id", product.id);
-        if (error) throw error;
+        let photoPath = basePhotoPath;
+        if (pendingPhoto) {
+          photoPath = await invoke<string>("import_product_photo", {
+            productId: product.id,
+            sourceFilePath: pendingPhoto,
+          });
+        }
+
+        const payload: ProductInputPayload = {
+          name: values.name,
+          price: values.price,
+          photoPath,
+          status: values.status,
+        };
+        await invoke("update_product", { id: product.id, input: payload });
 
         if (values.stock !== product.stock) {
-          await setProductStock(product.id, values.stock, "Ajuste manual");
+          await invoke("set_product_stock", {
+            productId: product.id,
+            stock: values.stock,
+            note: "Ajuste manual",
+          });
         }
 
         toast.success(
@@ -111,21 +109,33 @@ export function ProductFormDialog({
             : "Producto guardado como borrador"
         );
       } else {
-        await assertCanCreateProduct();
+        const createPayload: ProductInputPayload = {
+          name: values.name,
+          price: values.price,
+          photoPath: null,
+          status: values.status,
+        };
+        const created = await invoke<Product>("create_product", {
+          input: createPayload,
+        });
 
-        const { data: created, error } = await supabase
-          .from("products")
-          .insert({
-            center_id: center.id,
-            ...payload,
-            stock: 0,
-          })
-          .select("id")
-          .single();
-        if (error) throw new Error(error.message);
+        if (pendingPhoto) {
+          const photoPath = await invoke<string>("import_product_photo", {
+            productId: created.id,
+            sourceFilePath: pendingPhoto,
+          });
+          await invoke("update_product", {
+            id: created.id,
+            input: { ...createPayload, photoPath },
+          });
+        }
 
         if (values.stock > 0) {
-          await setProductStock(created.id, values.stock, "Alta de producto");
+          await invoke("set_product_stock", {
+            productId: created.id,
+            stock: values.stock,
+            note: "Alta de producto",
+          });
         }
 
         toast.success(
@@ -135,14 +145,10 @@ export function ProductFormDialog({
         );
       }
 
-      if (previousUrl && previousUrl !== photoUrl) {
-        await deleteCatalogImage(previousUrl);
-      }
-
       onOpenChange(false);
       onSuccess();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Error al guardar");
+      toast.error(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
     }
@@ -171,11 +177,11 @@ export function ProductFormDialog({
         >
           <div className="space-y-4 overflow-y-auto px-4 py-4">
             <ImageUpload
-              value={photo}
-              previewUrl={clearPhoto ? null : product?.photo_url}
-              onChange={(file) => {
-                setPhoto(file);
-                setClearPhoto(file === null);
+              value={pendingPhoto}
+              previewPath={clearPhoto ? null : product?.photo_path}
+              onChange={(path) => {
+                setPendingPhoto(path);
+                setClearPhoto(path === null);
               }}
             />
             <div className="space-y-2">

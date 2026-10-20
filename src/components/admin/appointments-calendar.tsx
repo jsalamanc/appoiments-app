@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/dialog";
 import {
   addDays,
+  type AppointmentServiceOption,
   endOfWeek,
   formatAppointmentStatus,
   getAppointmentServiceDurationMinutes,
@@ -33,23 +34,19 @@ import {
   isPastDay,
   isPastSlot,
   listAppointmentsInRange,
+  listPublishedServicesForAppointments,
   nextBookableSlot,
   setAppointmentStatus,
   startOfWeek,
 } from "@/lib/appointments";
-import { getCurrentCenter } from "@/lib/catalog";
 import { listEmployees } from "@/lib/employees";
 import { formatCurrency, formatDateTime, formatDuration } from "@/lib/format";
-import { parseCenterModules } from "@/lib/modules";
-import { canUseModule } from "@/lib/plan-modules";
-import { getCurrentPlanAllowed } from "@/lib/plans";
-import { createClient } from "@/lib/supabase/client";
+import { getEnabledModules } from "@/lib/modules";
 import { cn } from "@/lib/utils";
 import type {
   AppointmentStatus,
   AppointmentWithDetails,
   Employee,
-  Service,
 } from "@/types/database";
 
 const DAY_START_HOUR = 8;
@@ -96,7 +93,7 @@ export function AppointmentsCalendar() {
   const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
   const [employeeFilter, setEmployeeFilter] = useState<string>("all");
   const [employees, setEmployees] = useState<Employee[]>([]);
-  const [services, setServices] = useState<Service[]>([]);
+  const [services, setServices] = useState<AppointmentServiceOption[]>([]);
   const [appointments, setAppointments] = useState<AppointmentWithDetails[]>(
     []
   );
@@ -116,22 +113,15 @@ export function AppointmentsCalendar() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const supabase = createClient();
-      const center = await getCurrentCenter();
-      const modules = parseCenterModules(center?.modules);
-      const planAllowed = await getCurrentPlanAllowed();
-      const servicesOn = canUseModule(modules, planAllowed, "services");
+      const modules = await getEnabledModules();
+      const servicesOn = modules.services;
       setServicesModuleEnabled(servicesOn);
 
       const [emps, servicesRes, appts] = await Promise.all([
         listEmployees(),
         servicesOn
-          ? supabase
-              .from("services")
-              .select("*")
-              .eq("status", "published")
-              .order("name")
-          : Promise.resolve({ data: [] as Service[], error: null }),
+          ? listPublishedServicesForAppointments()
+          : Promise.resolve([]),
         listAppointmentsInRange({
           from: weekStart.toISOString(),
           to: endOfWeek(weekStart).toISOString(),
@@ -139,9 +129,8 @@ export function AppointmentsCalendar() {
         }),
       ]);
 
-      if (servicesRes.error) throw servicesRes.error;
       setEmployees(emps);
-      setServices((servicesRes.data ?? []) as Service[]);
+      setServices(servicesRes);
       setAppointments(appts);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Error al cargar agenda");

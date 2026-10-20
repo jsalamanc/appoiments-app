@@ -10,29 +10,20 @@ const quantity = z
   .min(1, "Cantidad mínima 1");
 
 export const loginSchema = z.object({
-  email: z.email("Ingresa un correo válido"),
+  username: z.string().min(2, "Ingresa tu usuario"),
   password: z.string().min(6, "Mínimo 6 caracteres"),
+  rememberMe: z.boolean(),
 });
 
-export const registerSchema = z
+export const onboardingSchema = z
   .object({
-    centerName: z.string().min(2, "Nombre del centro requerido"),
-    email: z.email("Ingresa un correo válido"),
-    password: z.string().min(6, "Mínimo 6 caracteres"),
+    businessName: z.string().min(2, "Nombre del negocio requerido"),
+    ownerName: z.string().min(2, "Tu nombre es requerido"),
+    ownerUsername: z.string().min(2, "Elige un usuario"),
+    ownerPassword: z.string().min(6, "Mínimo 6 caracteres"),
     confirmPassword: z.string().min(6, "Confirma tu contraseña"),
   })
-  .refine((data) => data.password === data.confirmPassword, {
-    message: "Las contraseñas no coinciden",
-    path: ["confirmPassword"],
-  });
-
-export const registerInviteSchema = z
-  .object({
-    email: z.email("Ingresa un correo válido"),
-    password: z.string().min(6, "Mínimo 6 caracteres"),
-    confirmPassword: z.string().min(6, "Confirma tu contraseña"),
-  })
-  .refine((data) => data.password === data.confirmPassword, {
+  .refine((data) => data.ownerPassword === data.confirmPassword, {
     message: "Las contraseñas no coinciden",
     path: ["confirmPassword"],
   });
@@ -113,7 +104,7 @@ export const appointmentSchema = z.object({
 });
 
 export type LoginValues = z.infer<typeof loginSchema>;
-export type RegisterValues = z.infer<typeof registerSchema>;
+export type OnboardingValues = z.infer<typeof onboardingSchema>;
 export type ProductValues = z.infer<typeof productSchema>;
 export type ServiceValues = z.infer<typeof serviceSchema>;
 export type PackageValues = z.infer<typeof packageSchema>;

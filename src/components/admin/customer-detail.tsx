@@ -2,7 +2,6 @@
 
 import { ArrowLeft, CalendarDays, Pencil, Receipt } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { CustomerFormDialog } from "@/components/admin/customer-form-dialog";
@@ -37,7 +36,6 @@ export function CustomerDetail({
   appointments,
   appointmentsEnabled,
 }: CustomerDetailProps) {
-  const router = useRouter();
   const [customer, setCustomer] = useState(initialCustomer);
   const [editOpen, setEditOpen] = useState(false);
 
@@ -81,7 +79,6 @@ export function CustomerDetail({
         customer={customer}
         onSuccess={(updated) => {
           setCustomer(updated);
-          router.refresh();
         }}
       />
 

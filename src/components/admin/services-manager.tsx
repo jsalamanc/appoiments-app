@@ -1,8 +1,8 @@
 "use client";
 
+import { invoke } from "@tauri-apps/api/core";
 import { Clock, Pencil, Plus, Trash2 } from "lucide-react";
 import Image from "next/image";
-import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -14,11 +14,9 @@ import { ServiceFormDialog } from "@/components/admin/service-form-dialog";
 import { StatusBadge } from "@/components/admin/status-badge";
 import { FadeIn, StaggerChildren, StaggerItem } from "@/components/motion/fade-in";
 import { Button } from "@/components/ui/button";
-import { deleteCatalogImage } from "@/lib/catalog";
-import type { CatalogCounts } from "@/lib/catalog-list";
 import { formatCurrency, formatDuration } from "@/lib/format";
-import type { StatusFilter } from "@/lib/pagination";
-import { createClient } from "@/lib/supabase/client";
+import type { CatalogCounts, StatusFilter } from "@/lib/pagination";
+import { usePhotoSrc } from "@/lib/use-photo-src";
 import type { Service } from "@/types/database";
 
 const PATHNAME = "/admin/services";
@@ -31,7 +29,29 @@ type ServicesManagerProps = {
   totalPages: number;
   total: number;
   pageSize: number;
+  onRefresh: () => void;
 };
+
+function ServicePhoto({ service }: { service: Service }) {
+  const src = usePhotoSrc(service.photo_path);
+  return (
+    <div className="relative w-28 shrink-0 bg-muted sm:w-36">
+      {src ? (
+        <Image
+          src={src}
+          alt={service.name}
+          fill
+          className="object-cover"
+          unoptimized
+        />
+      ) : (
+        <div className="flex h-full items-center justify-center bg-mint/50 px-2 text-center text-xs text-muted-foreground">
+          Sin foto
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function ServicesManager({
   services,
@@ -41,37 +61,29 @@ export function ServicesManager({
   totalPages,
   total,
   pageSize,
+  onRefresh,
 }: ServicesManagerProps) {
-  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<Service | null>(null);
   const [toDelete, setToDelete] = useState<Service | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  const refresh = () => router.refresh();
+  const refresh = () => onRefresh();
   const hasAny = counts.all > 0;
 
   const handleDelete = async () => {
     if (!toDelete) return;
     setDeleting(true);
-    const supabase = createClient();
-    const photoUrl = toDelete.photo_url;
-    const { error } = await supabase
-      .from("services")
-      .delete()
-      .eq("id", toDelete.id);
-
-    if (error) {
+    try {
+      await invoke("delete_service", { id: toDelete.id });
+      toast.success("Servicio eliminado");
+      setToDelete(null);
+      refresh();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
       setDeleting(false);
-      toast.error(error.message);
-      return;
     }
-
-    await deleteCatalogImage(photoUrl);
-    setDeleting(false);
-    toast.success("Servicio eliminado");
-    setToDelete(null);
-    refresh();
   };
 
   return (
@@ -126,21 +138,7 @@ export function ServicesManager({
             {services.map((service) => (
               <StaggerItem key={service.id}>
                 <article className="flex overflow-hidden rounded-3xl border border-border/70 bg-card shadow-sm">
-                  <div className="relative w-28 shrink-0 bg-muted sm:w-36">
-                    {service.photo_url ? (
-                      <Image
-                        src={service.photo_url}
-                        alt={service.name}
-                        fill
-                        className="object-cover"
-                        unoptimized
-                      />
-                    ) : (
-                      <div className="flex h-full items-center justify-center bg-mint/50 px-2 text-center text-xs text-muted-foreground">
-                        Sin foto
-                      </div>
-                    )}
-                  </div>
+                  <ServicePhoto service={service} />
                   <div className="flex flex-1 flex-col gap-3 p-4">
                     <div>
                       <div className="mb-1.5 flex items-start justify-between gap-2">

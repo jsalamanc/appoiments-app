@@ -1,8 +1,6 @@
-import { getCurrentCenter } from "@/lib/catalog";
-import { parseCenterModules } from "@/lib/modules";
-import { canUseModule } from "@/lib/plan-modules";
-import { getCurrentPlanAllowed } from "@/lib/plans";
-import { createClient } from "@/lib/supabase/client";
+import { invoke } from "@tauri-apps/api/core";
+
+import { getEnabledModules } from "@/lib/modules";
 import type { Package, Product, Service } from "@/types/database";
 
 export type SellableCatalog = {
@@ -18,42 +16,74 @@ export type SellableCatalog = {
   };
 };
 
+type PublishedCatalog = {
+  products: Product[];
+  services: Service[];
+  packages: Package[];
+};
+
+type CountsOnly = {
+  counts: { all: number; published: number; draft: number };
+};
+
+const ZERO_COUNTS: CountsOnly = { counts: { all: 0, published: 0, draft: 0 } };
+
+/**
+ * Picker de ítems del POS (ver `src/components/admin/sale-form.tsx`).
+ * Antes consultaba Supabase directo; ahora usa `get_published_catalog`
+ * (comando Rust, dominio catálogo) para los ítems publicados y los
+ * `list_*` existentes (pidiendo solo `counts`, con `pageSize: 1`) para los
+ * conteos totales que alimentan `draftCount`/`totalCount`. El módulo de
+ * servicios/paquetes se sigue consultando con `get_enabled_modules`.
+ */
 export async function fetchSellableCatalog(): Promise<SellableCatalog> {
-  const supabase = createClient();
-  const center = await getCurrentCenter();
-  const modules = parseCenterModules(center?.modules);
-  const planAllowed = await getCurrentPlanAllowed();
-  const servicesEnabled = canUseModule(modules, planAllowed, "services");
-  const packagesEnabled = canUseModule(modules, planAllowed, "packages");
+  const modules = await getEnabledModules();
+  const servicesEnabled = modules.services;
+  const packagesEnabled = modules.packages;
 
-  const [productsRes, servicesRes, packagesRes] = await Promise.all([
-    supabase.from("products").select("*").order("name"),
-    servicesEnabled
-      ? supabase.from("services").select("*").order("name")
-      : Promise.resolve({ data: [] as Service[], error: null }),
-    packagesEnabled
-      ? supabase.from("packages").select("*").order("name")
-      : Promise.resolve({ data: [] as Package[], error: null }),
-  ]);
+  let products: Product[] = [];
+  let services: Service[] = [];
+  let packages: Package[] = [];
+  let totalCount = 0;
+  let error: string | null = null;
 
-  const error =
-    productsRes.error?.message ||
-    servicesRes.error?.message ||
-    packagesRes.error?.message ||
-    null;
+  try {
+    const [catalog, productCounts, serviceCounts, packageCounts] =
+      await Promise.all([
+        invoke<PublishedCatalog>("get_published_catalog"),
+        invoke<CountsOnly>("list_products", {
+          status: "all",
+          page: 1,
+          pageSize: 1,
+        }),
+        servicesEnabled
+          ? invoke<CountsOnly>("list_services", {
+              status: "all",
+              page: 1,
+              pageSize: 1,
+            })
+          : Promise.resolve(ZERO_COUNTS),
+        packagesEnabled
+          ? invoke<CountsOnly>("list_packages", {
+              status: "all",
+              page: 1,
+              pageSize: 1,
+            })
+          : Promise.resolve(ZERO_COUNTS),
+      ]);
 
-  const allProducts = productsRes.data ?? [];
-  const allServices = servicesRes.data ?? [];
-  const allPackages = packagesRes.data ?? [];
+    products = catalog.products;
+    services = servicesEnabled ? catalog.services : [];
+    packages = packagesEnabled ? catalog.packages : [];
 
-  const isPublished = (status: string | null | undefined) =>
-    String(status ?? "").trim().toLowerCase() === "published";
+    totalCount =
+      productCounts.counts.all +
+      serviceCounts.counts.all +
+      packageCounts.counts.all;
+  } catch (err) {
+    error = err instanceof Error ? err.message : String(err);
+  }
 
-  const products = allProducts.filter((item) => isPublished(item.status));
-  const services = allServices.filter((item) => isPublished(item.status));
-  const packages = allPackages.filter((item) => isPublished(item.status));
-
-  const totalCount = allProducts.length + allServices.length + allPackages.length;
   const publishedCount = products.length + services.length + packages.length;
   const draftCount = totalCount - publishedCount;
 

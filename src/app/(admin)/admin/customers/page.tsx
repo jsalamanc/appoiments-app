@@ -1,22 +1,49 @@
-import { CustomersManager } from "@/components/admin/customers-manager";
-import { listCustomers } from "@/lib/customers-server";
+"use client";
 
-export default async function CustomersPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ page?: string; q?: string }>;
-}) {
-  const params = await searchParams;
-  const page = Number.parseInt(params.page ?? "1", 10) || 1;
-  const result = await listCustomers({ page, q: params.q });
+import { invoke } from "@tauri-apps/api/core";
+import { useSearchParams } from "next/navigation";
+import { useEffect, useState } from "react";
+
+import { CustomersManager } from "@/components/admin/customers-manager";
+import type { Customer } from "@/types/database";
+
+type ListResult = {
+  items: Customer[];
+  total: number;
+  page: number;
+  total_pages: number;
+  page_size: number;
+  q: string;
+};
+
+export default function CustomersPage() {
+  const searchParams = useSearchParams();
+  const page = Number.parseInt(searchParams.get("page") ?? "1", 10) || 1;
+  const q = searchParams.get("q") ?? "";
+
+  const [result, setResult] = useState<ListResult | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    invoke<ListResult>("list_customers", { page, pageSize: 9, q }).then(
+      (r) => {
+        if (!cancelled) setResult(r);
+      }
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [page, q]);
+
+  if (!result) return null;
 
   return (
     <CustomersManager
       customers={result.items}
       page={result.page}
-      totalPages={result.totalPages}
+      totalPages={result.total_pages}
       total={result.total}
-      pageSize={result.pageSize}
+      pageSize={result.page_size}
       q={result.q}
     />
   );

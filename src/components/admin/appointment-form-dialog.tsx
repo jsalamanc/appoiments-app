@@ -17,6 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  type AppointmentServiceOption,
   createAppointment,
   nextBookableSlot,
   toLocalInputValue,
@@ -36,7 +37,6 @@ import type {
   AppointmentWithDetails,
   Customer,
   Employee,
-  Service,
 } from "@/types/database";
 
 type AppointmentFormDialogProps = {
@@ -46,7 +46,7 @@ type AppointmentFormDialogProps = {
   defaultStartsAt?: Date | null;
   defaultEmployeeId?: string | null;
   employees: Employee[];
-  services: Service[];
+  services: AppointmentServiceOption[];
   onSuccess: () => void;
 };
 
@@ -116,7 +116,6 @@ function AppointmentFormFields({
       });
       setCustomer({
         id: appointment.customers.id,
-        center_id: appointment.center_id,
         name: appointment.customers.name,
         email: appointment.customers.email,
         phone: appointment.customers.phone,

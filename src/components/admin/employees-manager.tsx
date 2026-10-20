@@ -1,7 +1,6 @@
 "use client";
 
 import { Pencil, Plus, Trash2, Users } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
@@ -15,7 +14,6 @@ import { deleteEmployee, listEmployees } from "@/lib/employees";
 import type { Employee } from "@/types/database";
 
 export function EmployeesManager() {
-  const router = useRouter();
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
@@ -40,7 +38,6 @@ export function EmployeesManager() {
 
   const refresh = () => {
     void load();
-    router.refresh();
   };
 
   const handleDelete = async () => {

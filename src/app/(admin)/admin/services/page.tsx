@@ -1,14 +1,45 @@
+"use client";
+
+import { invoke } from "@tauri-apps/api/core";
+import { useSearchParams } from "next/navigation";
+import { useEffect, useState } from "react";
+
 import { ModuleGate } from "@/components/admin/module-gate";
 import { ServicesManager } from "@/components/admin/services-manager";
-import { listServices } from "@/lib/catalog-list";
+import type { CatalogCounts, StatusFilter } from "@/lib/pagination";
+import type { Service } from "@/types/database";
 
-export default async function ServicesPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ status?: string; page?: string }>;
-}) {
-  const params = await searchParams;
-  const result = await listServices(params);
+type ListResult = {
+  items: Service[];
+  total: number;
+  page: number;
+  total_pages: number;
+  page_size: number;
+  status: StatusFilter;
+  counts: CatalogCounts;
+};
+
+export default function ServicesPage() {
+  const searchParams = useSearchParams();
+  const page = Number.parseInt(searchParams.get("page") ?? "1", 10) || 1;
+  const status = (searchParams.get("status") as StatusFilter) ?? "all";
+
+  const [result, setResult] = useState<ListResult | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    invoke<ListResult>("list_services", { status, page, pageSize: 9 }).then(
+      (r) => {
+        if (!cancelled) setResult(r);
+      }
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [page, status, reloadKey]);
+
+  if (!result) return null;
 
   return (
     <ModuleGate module="services">
@@ -17,9 +48,10 @@ export default async function ServicesPage({
         status={result.status}
         counts={result.counts}
         page={result.page}
-        totalPages={result.totalPages}
+        totalPages={result.total_pages}
         total={result.total}
-        pageSize={result.pageSize}
+        pageSize={result.page_size}
+        onRefresh={() => setReloadKey((k) => k + 1)}
       />
     </ModuleGate>
   );

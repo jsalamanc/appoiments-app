@@ -1,8 +1,8 @@
 "use client";
 
+import { invoke } from "@tauri-apps/api/core";
 import { Pencil, Plus, Trash2 } from "lucide-react";
 import Image from "next/image";
-import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -15,11 +15,9 @@ import { StatusBadge } from "@/components/admin/status-badge";
 import { FadeIn, StaggerChildren, StaggerItem } from "@/components/motion/fade-in";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { deleteCatalogImage } from "@/lib/catalog";
-import type { CatalogCounts } from "@/lib/catalog-list";
 import { formatCurrency } from "@/lib/format";
-import type { StatusFilter } from "@/lib/pagination";
-import { createClient } from "@/lib/supabase/client";
+import type { CatalogCounts, StatusFilter } from "@/lib/pagination";
+import { usePhotoSrc } from "@/lib/use-photo-src";
 import type { PackageWithItems, Product, Service } from "@/types/database";
 
 const PATHNAME = "/admin/packages";
@@ -34,7 +32,29 @@ type PackagesManagerProps = {
   totalPages: number;
   total: number;
   pageSize: number;
+  onRefresh: () => void;
 };
+
+function PackagePhoto({ pkg }: { pkg: PackageWithItems }) {
+  const src = usePhotoSrc(pkg.photo_path);
+  return (
+    <div className="relative h-40 shrink-0 bg-muted sm:h-auto sm:w-44">
+      {src ? (
+        <Image
+          src={src}
+          alt={pkg.name}
+          fill
+          className="object-cover"
+          unoptimized
+        />
+      ) : (
+        <div className="flex h-full min-h-40 items-center justify-center bg-lavender/50 text-sm text-muted-foreground">
+          Sin foto
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function PackagesManager({
   packages,
@@ -46,38 +66,30 @@ export function PackagesManager({
   totalPages,
   total,
   pageSize,
+  onRefresh,
 }: PackagesManagerProps) {
-  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<PackageWithItems | null>(null);
   const [toDelete, setToDelete] = useState<PackageWithItems | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  const refresh = () => router.refresh();
+  const refresh = () => onRefresh();
   const canCreate = products.length > 0 || services.length > 0;
   const hasAny = counts.all > 0;
 
   const handleDelete = async () => {
     if (!toDelete) return;
     setDeleting(true);
-    const supabase = createClient();
-    const photoUrl = toDelete.photo_url;
-    const { error } = await supabase
-      .from("packages")
-      .delete()
-      .eq("id", toDelete.id);
-
-    if (error) {
+    try {
+      await invoke("delete_package", { id: toDelete.id });
+      toast.success("Paquete eliminado");
+      setToDelete(null);
+      refresh();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
       setDeleting(false);
-      toast.error(error.message);
-      return;
     }
-
-    await deleteCatalogImage(photoUrl);
-    setDeleting(false);
-    toast.success("Paquete eliminado");
-    setToDelete(null);
-    refresh();
   };
 
   return (
@@ -138,21 +150,7 @@ export function PackagesManager({
             {packages.map((pkg) => (
               <StaggerItem key={pkg.id}>
                 <article className="flex flex-col overflow-hidden rounded-3xl border border-border/70 bg-card shadow-sm sm:flex-row">
-                  <div className="relative h-40 shrink-0 bg-muted sm:h-auto sm:w-44">
-                    {pkg.photo_url ? (
-                      <Image
-                        src={pkg.photo_url}
-                        alt={pkg.name}
-                        fill
-                        className="object-cover"
-                        unoptimized
-                      />
-                    ) : (
-                      <div className="flex h-full min-h-40 items-center justify-center bg-lavender/50 text-sm text-muted-foreground">
-                        Sin foto
-                      </div>
-                    )}
-                  </div>
+                  <PackagePhoto pkg={pkg} />
                   <div className="flex flex-1 flex-col gap-3 p-5">
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div>

@@ -412,7 +412,6 @@ export function SaleForm({ prefill }: { prefill?: SaleFormPrefill }) {
 
       toast.success("Venta registrada");
       router.push(`/admin/sales/history?highlight=${saleId}`);
-      router.refresh();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "No se pudo registrar");
     } finally {

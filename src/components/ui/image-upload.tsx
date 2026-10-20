@@ -1,53 +1,64 @@
 "use client";
 
+import { open } from "@tauri-apps/plugin-dialog";
 import { ImagePlus, X } from "lucide-react";
 import Image from "next/image";
-import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { usePhotoSrc } from "@/lib/use-photo-src";
 import { cn } from "@/lib/utils";
 
 type ImageUploadProps = {
-  value?: File | null;
-  previewUrl?: string | null;
-  onChange: (file: File | null) => void;
+  /** Ruta absoluta del archivo recién elegido en el file picker nativo,
+   * pendiente de copiarse al directorio de datos de la app (aún no se ha
+   * llamado a `import_*_photo`). */
+  value?: string | null;
+  /** `photo_path` relativo ya guardado en la base (si se está editando). */
+  previewPath?: string | null;
+  onChange: (sourceFilePath: string | null) => void;
   className?: string;
 };
 
 export function ImageUpload({
   value,
-  previewUrl,
+  previewPath,
   onChange,
   className,
 }: ImageUploadProps) {
-  const inputRef = useRef<HTMLInputElement>(null);
-  const [localPreview, setLocalPreview] = useState<string | null>(null);
+  const savedSrc = usePhotoSrc(value ? null : previewPath);
+  const pendingFileName = value ? value.split(/[\\/]/).pop() : null;
 
-  useEffect(() => {
-    if (!value) {
-      setLocalPreview(null);
-      return;
+  const pick = async () => {
+    const selected = await open({
+      multiple: false,
+      filters: [
+        { name: "Imágenes", extensions: ["png", "jpg", "jpeg", "gif", "webp"] },
+      ],
+    });
+    if (typeof selected === "string") {
+      onChange(selected);
     }
-    const url = URL.createObjectURL(value);
-    setLocalPreview(url);
-    return () => URL.revokeObjectURL(url);
-  }, [value]);
-
-  const src = localPreview || previewUrl || null;
+  };
 
   return (
     <div className={cn("space-y-2", className)}>
       <button
         type="button"
-        onClick={() => inputRef.current?.click()}
+        onClick={() => void pick()}
         className={cn(
           "relative flex h-36 w-full items-center justify-center overflow-hidden rounded-2xl border border-dashed border-border bg-muted/40 transition hover:border-primary/50 hover:bg-muted/70",
-          src && "border-solid"
+          (savedSrc || pendingFileName) && "border-solid"
         )}
       >
-        {src ? (
+        {pendingFileName ? (
+          <div className="flex flex-col items-center gap-1 px-4 text-center text-muted-foreground">
+            <ImagePlus className="size-6 text-primary" />
+            <span className="text-sm">{pendingFileName}</span>
+            <span className="text-xs">Se guardará al confirmar</span>
+          </div>
+        ) : savedSrc ? (
           <Image
-            src={src}
+            src={savedSrc}
             alt="Vista previa"
             fill
             className="object-cover"
@@ -60,22 +71,12 @@ export function ImageUpload({
           </div>
         )}
       </button>
-      <input
-        ref={inputRef}
-        type="file"
-        accept="image/*"
-        className="hidden"
-        onChange={(e) => onChange(e.target.files?.[0] ?? null)}
-      />
-      {src && (
+      {(value || previewPath) && (
         <Button
           type="button"
           variant="ghost"
           size="sm"
-          onClick={() => {
-            onChange(null);
-            if (inputRef.current) inputRef.current.value = "";
-          }}
+          onClick={() => onChange(null)}
         >
           <X data-icon="inline-start" />
           Quitar foto

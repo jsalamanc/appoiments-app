@@ -106,7 +106,6 @@ export function AppointmentsToday() {
       await setAppointmentStatus(appointment.id, status);
       toast.success(`Cita marcada como ${formatAppointmentStatus(status)}`);
       await load();
-      router.refresh();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "No se pudo actualizar");
     } finally {

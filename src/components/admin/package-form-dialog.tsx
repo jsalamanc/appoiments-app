@@ -1,6 +1,7 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
+import { invoke } from "@tauri-apps/api/core";
 import { Plus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useFieldArray, useForm } from "react-hook-form";
@@ -20,12 +21,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import type { CatalogStatus } from "@/lib/catalog-status";
-import {
-  deleteCatalogImage,
-  getCurrentCenter,
-  uploadCatalogImage,
-} from "@/lib/catalog";
-import { createClient } from "@/lib/supabase/client";
 import { packageSchema, type PackageValues } from "@/lib/validations";
 import type { PackageWithItems, Product, Service } from "@/types/database";
 
@@ -38,6 +33,15 @@ type PackageFormDialogProps = {
   onSuccess: () => void;
 };
 
+type PackageInputPayload = {
+  name: string;
+  description: string | null;
+  price: number;
+  photoPath: string | null;
+  status: CatalogStatus;
+  items: { itemType: "product" | "service"; itemId: string; quantity: number }[];
+};
+
 export function PackageFormDialog({
   open,
   onOpenChange,
@@ -46,7 +50,7 @@ export function PackageFormDialog({
   services,
   onSuccess,
 }: PackageFormDialogProps) {
-  const [photo, setPhoto] = useState<File | null>(null);
+  const [pendingPhoto, setPendingPhoto] = useState<string | null>(null);
   const [clearPhoto, setClearPhoto] = useState(false);
   const [loading, setLoading] = useState(false);
 
@@ -93,7 +97,7 @@ export function PackageFormDialog({
             quantity: item.quantity,
           })) ?? [{ item_type: "service" as const, item_id: "", quantity: 1 }],
       });
-      setPhoto(null);
+      setPendingPhoto(null);
       setClearPhoto(false);
     }
   }, [open, pkg, reset]);
@@ -101,69 +105,48 @@ export function PackageFormDialog({
   const save = async (values: PackageValues) => {
     setLoading(true);
     try {
-      const supabase = createClient();
-      const center = await getCurrentCenter();
-      if (!center) throw new Error("No se encontró el centro");
-
-      const previousUrl = pkg?.photo_url ?? null;
-      let photoUrl = previousUrl;
-      if (clearPhoto && !photo) photoUrl = null;
-      if (photo) {
-        photoUrl = await uploadCatalogImage(center.id, photo, "packages");
+      const basePhotoPath = clearPhoto ? null : pkg?.photo_path ?? null;
+      let photoPath = basePhotoPath;
+      if (pendingPhoto && pkg) {
+        photoPath = await invoke<string>("import_package_photo", {
+          packageId: pkg.id,
+          sourceFilePath: pendingPhoto,
+        });
       }
 
-      const packagePayload = {
+      const payload: PackageInputPayload = {
         name: values.name,
         description: values.description || null,
         price: values.price,
-        photo_url: photoUrl,
+        photoPath,
         status: values.status,
+        items: values.items.map((item) => ({
+          itemType: item.item_type,
+          itemId: item.item_id,
+          quantity: item.quantity,
+        })),
       };
 
-      let packageId = pkg?.id;
-
       if (pkg) {
-        const { error } = await supabase
-          .from("packages")
-          .update(packagePayload)
-          .eq("id", pkg.id);
-        if (error) throw error;
-
-        const { error: deleteError } = await supabase
-          .from("package_items")
-          .delete()
-          .eq("package_id", pkg.id);
-        if (deleteError) throw deleteError;
+        await invoke("update_package", { id: pkg.id, input: payload });
       } else {
-        const { data, error } = await supabase
-          .from("packages")
-          .insert({
-            center_id: center.id,
-            ...packagePayload,
-          })
-          .select("id")
-          .single();
-        if (error) throw error;
-        packageId = data.id;
-      }
+        const created = await invoke<{ id: string }>("create_package", {
+          input: payload,
+        });
 
-      if (!packageId) throw new Error("No se pudo crear el paquete");
-
-      const itemsPayload = values.items.map((item) => ({
-        package_id: packageId!,
-        item_type: item.item_type,
-        product_id: item.item_type === "product" ? item.item_id : null,
-        service_id: item.item_type === "service" ? item.item_id : null,
-        quantity: item.quantity,
-      }));
-
-      const { error: itemsError } = await supabase
-        .from("package_items")
-        .insert(itemsPayload);
-      if (itemsError) throw itemsError;
-
-      if (previousUrl && previousUrl !== photoUrl) {
-        await deleteCatalogImage(previousUrl);
+        if (pendingPhoto) {
+          const createdPhotoPath = await invoke<string>(
+            "import_package_photo",
+            {
+              packageId: created.id,
+              sourceFilePath: pendingPhoto,
+            }
+          );
+          await invoke("update_package", {
+            id: created.id,
+            input: { ...payload, photoPath: createdPhotoPath },
+          });
+        }
       }
 
       toast.success(
@@ -176,7 +159,7 @@ export function PackageFormDialog({
       onOpenChange(false);
       onSuccess();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Error al guardar");
+      toast.error(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
     }
@@ -203,11 +186,11 @@ export function PackageFormDialog({
         >
           <div className="space-y-4 overflow-y-auto px-4 py-4">
             <ImageUpload
-              value={photo}
-              previewUrl={clearPhoto ? null : pkg?.photo_url}
-              onChange={(file) => {
-                setPhoto(file);
-                setClearPhoto(file === null);
+              value={pendingPhoto}
+              previewPath={clearPhoto ? null : pkg?.photo_path}
+              onChange={(path) => {
+                setPendingPhoto(path);
+                setClearPhoto(path === null);
               }}
             />
 
