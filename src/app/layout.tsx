@@ -1,7 +1,6 @@
-import type { Metadata, Viewport } from "next";
+import type { Metadata } from "next";
 import { Cormorant_Garamond, Nunito } from "next/font/google";
 import { Toaster } from "@/components/ui/sonner";
-import { SerwistProvider } from "@/components/pwa/serwist-provider";
 
 import "./globals.css";
 
@@ -30,38 +29,6 @@ export const metadata: Metadata = {
     template: APP_TITLE_TEMPLATE,
   },
   description: APP_DESCRIPTION,
-  appleWebApp: {
-    capable: true,
-    statusBarStyle: "default",
-    title: APP_NAME,
-  },
-  formatDetection: {
-    telephone: false,
-  },
-  openGraph: {
-    type: "website",
-    siteName: APP_NAME,
-    title: {
-      default: APP_DEFAULT_TITLE,
-      template: APP_TITLE_TEMPLATE,
-    },
-    description: APP_DESCRIPTION,
-  },
-  twitter: {
-    card: "summary",
-    title: {
-      default: APP_DEFAULT_TITLE,
-      template: APP_TITLE_TEMPLATE,
-    },
-    description: APP_DESCRIPTION,
-  },
-  icons: {
-    apple: "/icons/apple-touch-icon.png",
-  },
-};
-
-export const viewport: Viewport = {
-  themeColor: "#b89bb8",
 };
 
 export default function RootLayout({
@@ -75,10 +42,8 @@ export default function RootLayout({
       className={`${display.variable} ${body.variable} h-full antialiased`}
     >
       <body className="flex min-h-full flex-col font-sans">
-        <SerwistProvider>
-          {children}
-          <Toaster richColors position="top-center" />
-        </SerwistProvider>
+        {children}
+        <Toaster richColors position="top-center" />
       </body>
     </html>
   );

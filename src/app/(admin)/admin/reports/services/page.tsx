@@ -1,16 +1,42 @@
+"use client";
+
+import { invoke } from "@tauri-apps/api/core";
+import { useSearchParams } from "next/navigation";
+import { useEffect, useState } from "react";
+
 import { ModuleGate } from "@/components/admin/module-gate";
 import { OwnerGate } from "@/components/admin/owner-gate";
 import { ReportsServices } from "@/components/admin/reports-services";
-import { getReportPeriod, getTopServicesReport } from "@/lib/reports-server";
+import { getReportPeriod } from "@/lib/reports";
+import type { ReportPeriod, TopServiceRow } from "@/lib/reports";
 
-type PageProps = {
-  searchParams: Promise<{ period?: string }>;
+type TopServicesReport = {
+  period: ReportPeriod;
+  salesCount: number;
+  totalRevenue: number;
+  averageTicket: number;
+  rows: TopServiceRow[];
 };
 
-export default async function ReportsServicesPage({ searchParams }: PageProps) {
-  const params = await searchParams;
-  const { period } = getReportPeriod(params.period);
-  const data = await getTopServicesReport(period);
+export default function ReportsServicesPage() {
+  const searchParams = useSearchParams();
+  const { period } = getReportPeriod(searchParams.get("period") ?? undefined);
+
+  const [data, setData] = useState<TopServicesReport | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    invoke<TopServicesReport>("get_top_services_report", { period }).then(
+      (r) => {
+        if (!cancelled) setData(r);
+      }
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [period]);
+
+  if (!data) return null;
 
   return (
     <OwnerGate>

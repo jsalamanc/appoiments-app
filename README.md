@@ -1,51 +1,69 @@
 # Aura Studio — Centros Estéticos
 
-
-App admin para centros estéticos: registro, login, agenda de citas, ventas e inventario.
+App de escritorio (Tauri) para centros estéticos: agenda de citas, ventas,
+inventario y catálogo. Funciona 100% en local — no requiere internet ni una
+cuenta en la nube para operar día a día.
 
 ## Stack
 
-- Next.js (App Router) + TypeScript + Tailwind
-- Supabase (Auth, Postgres, Storage)
+- Tauri v2 (Rust) + Next.js (App Router, exportación estática) + TypeScript + Tailwind
+- SQLite embebido (`rusqlite`), un archivo de base de datos por instalación
 - react-hook-form + Zod
 - shadcn/ui + Framer Motion
 
-## Setup
+## Prerrequisitos (una sola vez por máquina)
 
-1. Instala dependencias:
+1. Node.js 20+ y npm.
+2. Rust (vía [rustup](https://rustup.rs)):
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+3. Dependencias de sistema de Tauri en Linux (Debian/Ubuntu):
+
+```bash
+sudo apt update && sudo apt install -y \
+  libwebkit2gtk-4.1-dev build-essential curl wget file \
+  libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+```
+
+En macOS o Windows sigue la [guía oficial de prerrequisitos de Tauri](https://v2.tauri.app/start/prerequisites/).
+
+## Setup
 
 ```bash
 npm install
 ```
 
-2. Copia variables de entorno:
+### Desarrollo (ventana nativa + recarga en caliente)
 
 ```bash
-cp .env.example .env.local
+npm run tauri dev
 ```
 
-3. En Supabase Dashboard → **SQL Editor**, ejecuta en orden:
-
-- [`supabase/migrations/001_init.sql`](supabase/migrations/001_init.sql) (proyecto nuevo)
-- [`supabase/migrations/002_catalog_status.sql`](supabase/migrations/002_catalog_status.sql) (si ya corriste el 001 antes de esta actualización)
-- [`supabase/migrations/003_sales.sql`](supabase/migrations/003_sales.sql) (clientes y ventas)
-- [`supabase/migrations/004_customer_document.sql`](supabase/migrations/004_customer_document.sql) (documento del cliente)
-- [`supabase/migrations/005_inventory.sql`](supabase/migrations/005_inventory.sql) (stock y movimientos de productos)
-- [`supabase/migrations/006_appointments.sql`](supabase/migrations/006_appointments.sql) (empleados y agenda de citas)
-- [`supabase/migrations/007_center_modules.sql`](supabase/migrations/007_center_modules.sql) (módulos opcionales por centro)
-
-4. (Recomendado para desarrollo) Authentication → Providers → Email → desactiva **Confirm email**.
-
-5. Arranca la app:
+### Build de producción (instalador nativo)
 
 ```bash
-npm run dev
+npm run tauri build
 ```
 
 ## Flujo
 
-1. Registra un centro (`/register`) — crea cuenta admin + fila en `centers`.
-2. Entra al panel (`/admin`). Productos y ventas están siempre activos.
-3. En `/admin/settings` activa los módulos que necesites (Agenda, Empleados, Servicios, Paquetes). Hoy son gratis.
-4. Con Agenda activa, crea empleados y cita en `/admin/appointments` (al cobrar, abre Nueva venta precargada).
-5. Gestiona el catálogo habilitado y registra ventas en `/admin/sales`.
+1. Al abrir la app por primera vez en un equipo, se muestra la pantalla de
+   **configuración inicial**: nombre del negocio + usuario dueño/a (usuario y
+   contraseña). Se guarda en la base de datos local del equipo.
+2. En los siguientes inicios, la app muestra el **login** directamente (sin
+   landing).
+3. Entra al panel (`/admin`). Productos y ventas están siempre activos.
+4. En `/admin/settings` activa los módulos que necesites (Agenda, Empleados,
+   Servicios, Paquetes, Reportes) y crea usuarios de staff. Todos los módulos
+   son libres en esta edición local.
+5. Con Agenda activa, crea empleados y citas en `/admin/appointments` (al
+   cobrar, abre Nueva venta precargada).
+6. Gestiona el catálogo habilitado y registra ventas en `/admin/sales`.
+
+Los datos (incluidas las fotos del catálogo) se guardan únicamente en el
+directorio de datos de la app en ese equipo — no hay sincronización entre
+dispositivos todavía. Eso está planeado como un servicio opcional de pago a
+futuro (sincronización, backups, integraciones).

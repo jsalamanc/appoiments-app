@@ -1,19 +1,39 @@
+"use client";
+
+import { invoke } from "@tauri-apps/api/core";
+import { useSearchParams } from "next/navigation";
+import { useEffect, useState } from "react";
+
 import { ModuleGate } from "@/components/admin/module-gate";
 import { OwnerGate } from "@/components/admin/owner-gate";
 import { ReportsEmployees } from "@/components/admin/reports-employees";
-import {
-  getEmployeePerformance,
-  getReportPeriod,
-} from "@/lib/reports-server";
+import { getReportPeriod } from "@/lib/reports";
+import type { EmployeePerformanceRow, ReportPeriod } from "@/lib/reports";
 
-type PageProps = {
-  searchParams: Promise<{ period?: string }>;
+type EmployeePerformanceReport = {
+  period: ReportPeriod;
+  rows: EmployeePerformanceRow[];
 };
 
-export default async function ReportsEmployeesPage({ searchParams }: PageProps) {
-  const params = await searchParams;
-  const { period } = getReportPeriod(params.period);
-  const data = await getEmployeePerformance(period);
+export default function ReportsEmployeesPage() {
+  const searchParams = useSearchParams();
+  const { period } = getReportPeriod(searchParams.get("period") ?? undefined);
+
+  const [data, setData] = useState<EmployeePerformanceReport | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    invoke<EmployeePerformanceReport>("get_employee_performance_report", {
+      period,
+    }).then((r) => {
+      if (!cancelled) setData(r);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [period]);
+
+  if (!data) return null;
 
   return (
     <OwnerGate>

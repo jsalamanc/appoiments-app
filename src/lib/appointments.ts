@@ -1,4 +1,5 @@
-import { createClient } from "@/lib/supabase/client";
+import { invoke } from "@tauri-apps/api/core";
+
 import type {
   AppointmentStatus,
   AppointmentWithDetails,
@@ -70,29 +71,12 @@ export async function listAppointmentsInRange(input: {
   from: string;
   to: string;
   employeeId?: string | null;
-}) {
-  const supabase = createClient();
-  let query = supabase
-    .from("appointments")
-    .select(
-      `
-      *,
-      employees ( id, name, color, active ),
-      customers ( id, name, email, phone, document ),
-      services ( id, name, price, duration_minutes, status )
-    `
-    )
-    .gte("starts_at", input.from)
-    .lt("starts_at", input.to)
-    .order("starts_at", { ascending: true });
-
-  if (input.employeeId) {
-    query = query.eq("employee_id", input.employeeId);
-  }
-
-  const { data, error } = await query;
-  if (error) throw error;
-  return (data ?? []) as unknown as AppointmentWithDetails[];
+}): Promise<AppointmentWithDetails[]> {
+  return invoke<AppointmentWithDetails[]>("list_appointments_in_range", {
+    from: input.from,
+    to: input.to,
+    employeeId: input.employeeId ?? null,
+  });
 }
 
 export async function createAppointment(input: {
@@ -102,16 +86,15 @@ export async function createAppointment(input: {
   startsAt: string;
   notes?: string;
 }) {
-  const supabase = createClient();
-  const { data, error } = await supabase.rpc("create_appointment", {
-    p_employee_id: input.employeeId,
-    p_customer_id: input.customerId,
-    p_service_id: input.serviceId,
-    p_starts_at: input.startsAt,
-    p_notes: input.notes ?? null,
+  return invoke<AppointmentWithDetails>("create_appointment", {
+    input: {
+      employeeId: input.employeeId,
+      customerId: input.customerId,
+      serviceId: input.serviceId,
+      startsAt: input.startsAt,
+      notes: input.notes ?? null,
+    },
   });
-  if (error) throw new Error(error.message);
-  return data as string;
 }
 
 export async function updateAppointment(input: {
@@ -122,48 +105,33 @@ export async function updateAppointment(input: {
   startsAt: string;
   notes?: string;
 }) {
-  const supabase = createClient();
-  const { data, error } = await supabase.rpc("update_appointment", {
-    p_appointment_id: input.appointmentId,
-    p_employee_id: input.employeeId,
-    p_customer_id: input.customerId,
-    p_service_id: input.serviceId,
-    p_starts_at: input.startsAt,
-    p_notes: input.notes ?? null,
+  return invoke<AppointmentWithDetails>("update_appointment", {
+    id: input.appointmentId,
+    input: {
+      employeeId: input.employeeId,
+      customerId: input.customerId,
+      serviceId: input.serviceId,
+      startsAt: input.startsAt,
+      notes: input.notes ?? null,
+    },
   });
-  if (error) throw new Error(error.message);
-  return data as string;
 }
 
 export async function setAppointmentStatus(
   appointmentId: string,
   status: AppointmentStatus
 ) {
-  const supabase = createClient();
-  const { error } = await supabase
-    .from("appointments")
-    .update({ status })
-    .eq("id", appointmentId);
-  if (error) throw error;
+  await invoke("set_appointment_status", { appointmentId, status });
 }
 
 export async function completeAppointmentWithSale(
   appointmentId: string,
   saleId: string
 ) {
-  const supabase = createClient();
-
-  const { error: saleError } = await supabase
-    .from("sales")
-    .update({ appointment_id: appointmentId })
-    .eq("id", saleId);
-  if (saleError) throw saleError;
-
-  const { error: apptError } = await supabase
-    .from("appointments")
-    .update({ status: "completed", sale_id: saleId })
-    .eq("id", appointmentId);
-  if (apptError) throw apptError;
+  await invoke("complete_appointment_with_sale", {
+    appointmentId,
+    saleId,
+  });
 }
 
 export function formatAppointmentStatus(status: AppointmentStatus) {
@@ -198,4 +166,28 @@ export function getAppointmentServicePrice(
 ) {
   if (appointment.services?.price == null) return null;
   return Number(appointment.services.price);
+}
+
+/** Forma mínima de servicio que necesita el selector del formulario de citas. */
+export type AppointmentServiceOption = {
+  id: string;
+  name: string;
+  price: number;
+  duration_minutes: number;
+  status: string;
+};
+
+/**
+ * Lista de servicios publicados para el selector del formulario de citas.
+ * El dominio `services` (propiedad de otro ingeniero) aún no expone su
+ * `list_services` paginado; este wrapper llama a un comando de solo lectura
+ * definido en el dominio `appointments`
+ * (`list_published_services_for_appointments`, ver
+ * src-tauri/src/commands/appointments.rs) para no bloquear el calendario en
+ * ese trabajo paralelo.
+ */
+export async function listPublishedServicesForAppointments() {
+  return invoke<AppointmentServiceOption[]>(
+    "list_published_services_for_appointments"
+  );
 }

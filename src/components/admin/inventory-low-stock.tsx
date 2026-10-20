@@ -12,6 +12,7 @@ import { FadeIn, StaggerChildren, StaggerItem } from "@/components/motion/fade-i
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatCurrency } from "@/lib/format";
+import { usePhotoSrc } from "@/lib/use-photo-src";
 import type { Product } from "@/types/database";
 
 type InventoryLowStockProps = {
@@ -27,13 +28,14 @@ function ProductRow({
   product: Product;
   onEdit: (product: Product) => void;
 }) {
+  const photoSrc = usePhotoSrc(product.photo_path);
   return (
     <article className="flex flex-col gap-3 rounded-3xl border border-border/70 bg-card shadow-sm p-4 sm:flex-row sm:items-center sm:justify-between">
       <div className="flex items-center gap-3">
         <div className="relative size-14 overflow-hidden rounded-2xl bg-muted">
-          {product.photo_url ? (
+          {photoSrc ? (
             <Image
-              src={product.photo_url}
+              src={photoSrc}
               alt={product.name}
               fill
               className="object-cover"

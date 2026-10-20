@@ -1,13 +1,11 @@
-import type { MemberRole } from "@/types/database";
+export type UserRole = "owner" | "staff";
 
-export type { MemberRole };
-
-export function isOwnerRole(role: MemberRole | null | undefined) {
+export function isOwnerRole(role: UserRole | string | null | undefined) {
   return role === "owner";
 }
 
-export function isReceptionRole(role: MemberRole | null | undefined) {
-  return role === "reception";
+export function isStaffRole(role: UserRole | string | null | undefined) {
+  return role === "staff";
 }
 
 /** Rutas visibles solo para dueño. */
@@ -21,6 +19,6 @@ export function isOwnerOnlyPath(pathname: string) {
   return false;
 }
 
-export function formatMemberRole(role: MemberRole) {
-  return role === "owner" ? "Dueño" : "Recepción";
+export function formatMemberRole(role: UserRole | string) {
+  return role === "owner" ? "Dueño" : "Staff";
 }

@@ -1,4 +1,5 @@
-import { createClient } from "@/lib/supabase/client";
+import { invoke } from "@tauri-apps/api/core";
+
 import type { PaymentMethod, SaleItemType } from "@/types/database";
 
 export type CartLineInput = {
@@ -47,16 +48,15 @@ export async function createSale(input: {
   customerId: string;
   paymentMethod: PaymentMethod;
   items: CartLineInput[];
-}) {
+}): Promise<string> {
   if (input.items.length === 0) {
     throw new Error("Agrega al menos un ítem a la venta");
   }
 
-  const supabase = createClient();
-  const { data, error } = await supabase.rpc("create_sale_with_inventory", {
-    p_customer_id: input.customerId,
-    p_payment_method: input.paymentMethod,
-    p_items: input.items.map((item) => ({
+  return invoke<string>("create_sale_with_inventory", {
+    customerId: input.customerId,
+    paymentMethod: input.paymentMethod,
+    items: input.items.map((item) => ({
       item_type: item.item_type,
       item_id: item.item_id,
       name: item.name,
@@ -64,7 +64,4 @@ export async function createSale(input: {
       quantity: item.quantity,
     })),
   });
-
-  if (error) throw new Error(error.message);
-  return data as string;
 }

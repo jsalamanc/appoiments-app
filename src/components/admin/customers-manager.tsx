@@ -91,7 +91,7 @@ export function CustomersManager({
             {customers.map((customer) => (
               <StaggerItem key={customer.id}>
                 <Link
-                  href={`/admin/customers/${customer.id}`}
+                  href={`/admin/customers/view?id=${customer.id}`}
                   className="flex items-start gap-3 rounded-3xl border border-border/70 bg-card shadow-sm p-4 transition hover:border-primary/40 hover:bg-card"
                 >
                   <span className="inline-flex rounded-2xl bg-lavender/50 p-3">

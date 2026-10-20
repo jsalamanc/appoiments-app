@@ -1,6 +1,7 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
+import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
@@ -19,12 +20,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import type { CatalogStatus } from "@/lib/catalog-status";
-import {
-  deleteCatalogImage,
-  getCurrentCenter,
-  uploadCatalogImage,
-} from "@/lib/catalog";
-import { createClient } from "@/lib/supabase/client";
 import { serviceSchema, type ServiceValues } from "@/lib/validations";
 import type { Service } from "@/types/database";
 
@@ -35,13 +30,22 @@ type ServiceFormDialogProps = {
   onSuccess: () => void;
 };
 
+type ServiceInputPayload = {
+  name: string;
+  description: string | null;
+  price: number;
+  durationMinutes: number;
+  photoPath: string | null;
+  status: CatalogStatus;
+};
+
 export function ServiceFormDialog({
   open,
   onOpenChange,
   service,
   onSuccess,
 }: ServiceFormDialogProps) {
-  const [photo, setPhoto] = useState<File | null>(null);
+  const [pendingPhoto, setPendingPhoto] = useState<string | null>(null);
   const [clearPhoto, setClearPhoto] = useState(false);
   const [loading, setLoading] = useState(false);
 
@@ -74,7 +78,7 @@ export function ServiceFormDialog({
         duration_minutes: service?.duration_minutes ?? 60,
         status: service?.status ?? "draft",
       });
-      setPhoto(null);
+      setPendingPhoto(null);
       setClearPhoto(false);
     }
   }, [open, service, reset]);
@@ -82,43 +86,56 @@ export function ServiceFormDialog({
   const save = async (values: ServiceValues) => {
     setLoading(true);
     try {
-      const supabase = createClient();
-      const center = await getCurrentCenter();
-      if (!center) throw new Error("No se encontró el centro");
-
-      const previousUrl = service?.photo_url ?? null;
-      let photoUrl = previousUrl;
-      if (clearPhoto && !photo) photoUrl = null;
-      if (photo) {
-        photoUrl = await uploadCatalogImage(center.id, photo, "services");
-      }
-
-      const payload = {
-        name: values.name,
-        description: values.description || null,
-        price: values.price,
-        duration_minutes: values.duration_minutes,
-        photo_url: photoUrl,
-        status: values.status,
-      };
+      const basePhotoPath = clearPhoto ? null : service?.photo_path ?? null;
 
       if (service) {
-        const { error } = await supabase
-          .from("services")
-          .update(payload)
-          .eq("id", service.id);
-        if (error) throw error;
+        let photoPath = basePhotoPath;
+        if (pendingPhoto) {
+          photoPath = await invoke<string>("import_service_photo", {
+            serviceId: service.id,
+            sourceFilePath: pendingPhoto,
+          });
+        }
+
+        const payload: ServiceInputPayload = {
+          name: values.name,
+          description: values.description || null,
+          price: values.price,
+          durationMinutes: values.duration_minutes,
+          photoPath,
+          status: values.status,
+        };
+        await invoke("update_service", { id: service.id, input: payload });
+
         toast.success(
           values.status === "published"
             ? "Servicio actualizado y publicado"
             : "Servicio guardado como borrador"
         );
       } else {
-        const { error } = await supabase.from("services").insert({
-          center_id: center.id,
-          ...payload,
+        const createPayload: ServiceInputPayload = {
+          name: values.name,
+          description: values.description || null,
+          price: values.price,
+          durationMinutes: values.duration_minutes,
+          photoPath: null,
+          status: values.status,
+        };
+        const created = await invoke<Service>("create_service", {
+          input: createPayload,
         });
-        if (error) throw error;
+
+        if (pendingPhoto) {
+          const photoPath = await invoke<string>("import_service_photo", {
+            serviceId: created.id,
+            sourceFilePath: pendingPhoto,
+          });
+          await invoke("update_service", {
+            id: created.id,
+            input: { ...createPayload, photoPath },
+          });
+        }
+
         toast.success(
           values.status === "published"
             ? "Servicio creado y publicado"
@@ -126,14 +143,10 @@ export function ServiceFormDialog({
         );
       }
 
-      if (previousUrl && previousUrl !== photoUrl) {
-        await deleteCatalogImage(previousUrl);
-      }
-
       onOpenChange(false);
       onSuccess();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Error al guardar");
+      toast.error(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
     }
@@ -162,11 +175,11 @@ export function ServiceFormDialog({
         >
           <div className="space-y-4 overflow-y-auto px-4 py-4">
             <ImageUpload
-              value={photo}
-              previewUrl={clearPhoto ? null : service?.photo_url}
-              onChange={(file) => {
-                setPhoto(file);
-                setClearPhoto(file === null);
+              value={pendingPhoto}
+              previewPath={clearPhoto ? null : service?.photo_path}
+              onChange={(path) => {
+                setPendingPhoto(path);
+                setClearPhoto(path === null);
               }}
             />
             <div className="space-y-2">

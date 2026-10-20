@@ -1,18 +1,10 @@
-import { getCurrentCenter } from "@/lib/catalog";
-import {
-  clampModulesToPlan,
-  isModuleAllowedByPlan,
-  parseAllowedModules,
-} from "@/lib/plan-modules";
-import { createClient } from "@/lib/supabase/client";
-import type { Center, Json } from "@/types/database";
+import { invoke } from "@tauri-apps/api/core";
 
 export type ModuleKey =
   | "employees"
   | "appointments"
   | "services"
   | "packages"
-  | "public_booking"
   | "reports";
 
 export type CenterModules = Record<ModuleKey, boolean>;
@@ -22,7 +14,6 @@ export const MODULE_KEYS: ModuleKey[] = [
   "employees",
   "services",
   "packages",
-  "public_booking",
   "reports",
 ];
 
@@ -37,8 +28,7 @@ export const MODULE_META: Record<
   },
   employees: {
     label: "Empleados",
-    description:
-      "Profesionales y calendarios. Se puede usar sin Agenda.",
+    description: "Profesionales y calendarios. Se puede usar sin Agenda.",
   },
   services: {
     label: "Servicios",
@@ -47,11 +37,6 @@ export const MODULE_META: Record<
   packages: {
     label: "Paquetes",
     description: "Combos de productos y servicios a precio especial.",
-  },
-  public_booking: {
-    label: "Portal de reservas",
-    description:
-      "Página pública para que los clientes agenden solos. Activa Agenda y Servicios.",
   },
   reports: {
     label: "Reportes",
@@ -65,7 +50,6 @@ export const DEFAULT_MODULES: CenterModules = {
   appointments: false,
   services: false,
   packages: false,
-  public_booking: false,
   reports: false,
 };
 
@@ -89,50 +73,23 @@ export const MODULE_NAV: Record<string, ModuleKey | null> = {
   "/admin/reports/no-shows": "reports",
 };
 
-export function parseCenterModules(
-  value: Center["modules"] | Json | null | undefined
-): CenterModules {
-  const raw =
-    value && typeof value === "object" && !Array.isArray(value)
-      ? (value as Record<string, unknown>)
-      : {};
-
-  return {
-    employees: Boolean(raw.employees),
-    appointments: Boolean(raw.appointments),
-    services: Boolean(raw.services),
-    packages: Boolean(raw.packages),
-    public_booking: Boolean(raw.public_booking),
-    reports: Boolean(raw.reports),
-  };
-}
-
 export function isModuleEnabled(
-  modules: CenterModules | Center["modules"] | null | undefined,
+  modules: CenterModules | null | undefined,
   key: ModuleKey
 ) {
-  return parseCenterModules(modules as Json)[key] === true;
+  return Boolean(modules?.[key]);
 }
 
 /**
- * Reglas de dependencias:
+ * Reglas de dependencias (sin chequeo de plan: todos los módulos son
+ * libres en la edición local):
  * - appointments ON ⇒ employees ON
- * - employees OFF ⇒ appointments OFF (y public_booking OFF)
- * - public_booking ON ⇒ appointments + services (+ employees)
- * - appointments OFF o services OFF ⇒ public_booking OFF
+ * - employees OFF ⇒ appointments OFF
  */
 export function normalizeModules(input: CenterModules): CenterModules {
   const next = { ...input };
   if (next.appointments) next.employees = true;
   if (!next.employees) next.appointments = false;
-  if (next.public_booking) {
-    next.appointments = true;
-    next.services = true;
-    next.employees = true;
-  }
-  if (!next.appointments || !next.services) {
-    next.public_booking = false;
-  }
   return next;
 }
 
@@ -144,67 +101,22 @@ export function toggleModule(
 ): CenterModules {
   const next = { ...current, [key]: enabled };
   if (key === "appointments" && enabled) {
-    next.appointments = true;
     next.employees = true;
   }
   if (key === "employees" && !enabled) {
-    next.employees = false;
     next.appointments = false;
-    next.public_booking = false;
-  }
-  if (key === "appointments" && !enabled) {
-    next.appointments = false;
-    next.public_booking = false;
-  }
-  if (key === "services" && !enabled) {
-    next.services = false;
-    next.public_booking = false;
-  }
-  if (key === "public_booking" && enabled) {
-    next.public_booking = true;
-    next.appointments = true;
-    next.services = true;
-    next.employees = true;
   }
   return normalizeModules(next);
 }
 
-export async function updateCenterModules(modules: CenterModules) {
-  const supabase = createClient();
-  const center = await getCurrentCenter();
-  if (!center) throw new Error("No se encontró el centro");
+export async function getEnabledModules(): Promise<CenterModules> {
+  return invoke<CenterModules>("get_enabled_modules");
+}
 
-  const { data: plan, error: planError } = await supabase
-    .from("plans")
-    .select("id, allowed_modules")
-    .eq("id", center.plan_id)
-    .maybeSingle();
-
-  if (planError) throw new Error(planError.message);
-
-  const allowed = parseAllowedModules(
-    plan?.allowed_modules,
-    plan?.id ?? center.plan_id
-  );
-
-  for (const key of MODULE_KEYS) {
-    if (modules[key] && !isModuleAllowedByPlan(allowed, key)) {
-      throw new Error(
-        `${MODULE_META[key].label} no está incluido en tu plan. Cambia de plan en Ajustes.`
-      );
-    }
-  }
-
-  const normalized = clampModulesToPlan(normalizeModules(modules), allowed);
-  const { data, error } = await supabase
-    .from("centers")
-    .update({ modules: normalized as Center["modules"] })
-    .eq("id", center.id)
-    .select("*")
-    .single();
-
-  if (error) throw error;
-  return data as Center;
+export async function updateCenterModules(
+  modules: CenterModules
+): Promise<CenterModules> {
+  return invoke<CenterModules>("update_enabled_modules", { modules });
 }
 
 export function moduleForPath(pathname: string): ModuleKey | null {

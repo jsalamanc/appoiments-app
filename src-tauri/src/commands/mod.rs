@@ -1,0 +1,11 @@
+pub mod appointments;
+pub mod auth;
+pub mod business_profile;
+pub mod customers;
+pub mod employees;
+pub mod inventory;
+pub mod packages;
+pub mod products;
+pub mod reports;
+pub mod sales;
+pub mod services;

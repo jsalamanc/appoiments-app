@@ -1,5 +1,6 @@
 "use client";
 
+import { invoke } from "@tauri-apps/api/core";
 import { motion } from "framer-motion";
 import {
   Banknote,
@@ -34,16 +35,9 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import {
-  parseCenterModules,
-  type CenterModules,
-  type ModuleKey,
-} from "@/lib/modules";
-import { canUseModule } from "@/lib/plan-modules";
+import { DEFAULT_MODULES, type CenterModules, type ModuleKey } from "@/lib/modules";
 import { isOwnerRole } from "@/lib/roles";
-import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
-import type { Center, MemberRole } from "@/types/database";
 
 type NavLink = {
   href: string;
@@ -182,11 +176,10 @@ const navGroups: NavGroup[] = [
 function isLinkVisible(
   link: NavLink,
   modules: CenterModules,
-  planAllowed: CenterModules,
-  role: MemberRole | null
+  role: string | null
 ) {
   if (link.ownerOnly && !isOwnerRole(role)) return false;
-  return !link.module || canUseModule(modules, planAllowed, link.module);
+  return !link.module || modules[link.module];
 }
 
 function isLinkActive(pathname: string, link: NavLink) {
@@ -198,12 +191,9 @@ function isLinkActive(pathname: string, link: NavLink) {
 function filterLinks(
   links: NavLink[],
   modules: CenterModules,
-  planAllowed: CenterModules,
-  role: MemberRole | null
+  role: string | null
 ) {
-  return links.filter((link) =>
-    isLinkVisible(link, modules, planAllowed, role)
-  );
+  return links.filter((link) => isLinkVisible(link, modules, role));
 }
 
 function NavLinkItem({
@@ -252,19 +242,17 @@ function NavPanel({
   onNavigate,
   layoutId,
   modules,
-  planAllowed,
   role,
 }: {
   pathname: string;
   onNavigate?: () => void;
   layoutId: string;
   modules: CenterModules;
-  planAllowed: CenterModules;
-  role: MemberRole | null;
+  role: string | null;
 }) {
   const visiblePrimary = useMemo(
-    () => filterLinks(primaryLinks, modules, planAllowed, role),
-    [modules, planAllowed, role]
+    () => filterLinks(primaryLinks, modules, role),
+    [modules, role]
   );
 
   const visibleGroups = useMemo(
@@ -272,10 +260,10 @@ function NavPanel({
       navGroups
         .map((group) => ({
           ...group,
-          items: filterLinks(group.items, modules, planAllowed, role),
+          items: filterLinks(group.items, modules, role),
         }))
         .filter((group) => group.items.length > 0),
-    [modules, planAllowed, role]
+    [modules, role]
   );
 
   const activeGroupId = useMemo(() => {
@@ -373,47 +361,57 @@ function NavPanel({
   );
 }
 
-function Brand({ center }: { center: Center | null }) {
+function Brand({ businessName }: { businessName: string | null }) {
   return (
     <div className="px-2">
       <Link href="/admin" className="font-heading text-2xl font-semibold">
         Aura Studio
       </Link>
       <p className="mt-1 truncate text-sm text-muted-foreground">
-        {center?.name ?? "Tu centro"}
+        {businessName ?? "Tu negocio"}
       </p>
     </div>
   );
 }
 
-export function AdminSidebar({
-  center,
-  role,
-  planAllowed,
-}: {
-  center: Center | null;
-  role: MemberRole | null;
-  planAllowed: CenterModules;
-}) {
+export function AdminSidebar() {
   const pathname = usePathname();
   const router = useRouter();
   const [open, setOpen] = useState(false);
+  const [businessName, setBusinessName] = useState<string | null>(null);
+  const [modules, setModules] = useState<CenterModules>(DEFAULT_MODULES);
+  const [role, setRole] = useState<string | null>(null);
 
-  const modules = useMemo(
-    () => parseCenterModules(center?.modules),
-    [center?.modules]
-  );
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([
+      invoke<{ name: string }>("get_business_profile"),
+      invoke<CenterModules>("get_enabled_modules"),
+      invoke<{ role: string } | null>("auth_current_user"),
+    ]).then(([profile, enabledModules, user]) => {
+      if (cancelled) return;
+      setBusinessName(profile.name);
+      setModules(enabledModules);
+      setRole(user?.role ?? null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     setOpen(false);
   }, [pathname]);
 
   const signOut = async () => {
-    const supabase = createClient();
-    await supabase.auth.signOut();
+    await invoke("auth_logout", { sessionToken: null });
+    try {
+      localStorage.removeItem("aura_session_token");
+    } catch {
+      // localStorage puede no estar disponible; no es crítico.
+    }
     setOpen(false);
-    router.push("/login");
-    router.refresh();
+    router.push("/");
   };
 
   return (
@@ -422,7 +420,7 @@ export function AdminSidebar({
         <div className="min-w-0">
           <p className="font-heading text-xl font-semibold">Aura Studio</p>
           <p className="truncate text-xs text-muted-foreground">
-            {center?.name ?? "Tu centro"}
+            {businessName ?? "Tu negocio"}
           </p>
         </div>
         <Button
@@ -446,7 +444,7 @@ export function AdminSidebar({
               Aura Studio
             </SheetTitle>
             <SheetDescription className="truncate">
-              {center?.name ?? "Tu centro"}
+              {businessName ?? "Tu negocio"}
             </SheetDescription>
           </SheetHeader>
 
@@ -456,7 +454,6 @@ export function AdminSidebar({
               layoutId="admin-nav-mobile"
               onNavigate={() => setOpen(false)}
               modules={modules}
-              planAllowed={planAllowed}
               role={role}
             />
             <Button
@@ -473,14 +470,13 @@ export function AdminSidebar({
 
       <aside className="hidden h-full w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar/80 px-4 py-5 backdrop-blur lg:flex">
         <div className="mb-6 shrink-0">
-          <Brand center={center} />
+          <Brand businessName={businessName} />
         </div>
 
         <NavPanel
           pathname={pathname}
           layoutId="admin-nav-desktop"
           modules={modules}
-          planAllowed={planAllowed}
           role={role}
         />
 

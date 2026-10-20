@@ -9,6 +9,15 @@ export type CatalogListQuery = {
   page: number;
 };
 
+/** Conteos por estado, devueltos por los comandos `list_products`/
+ * `list_services`/`list_packages` (ver `CatalogCounts` en
+ * `src-tauri/src/util/catalog.rs`) para alimentar `CatalogFilters`. */
+export type CatalogCounts = {
+  all: number;
+  published: number;
+  draft: number;
+};
+
 export function parseCatalogListQuery(input: {
   status?: string;
   page?: string;

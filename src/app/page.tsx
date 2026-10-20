@@ -1,71 +1,302 @@
 "use client";
 
+import { zodResolver } from "@hookform/resolvers/zod";
+import { invoke } from "@tauri-apps/api/core";
 import { motion } from "framer-motion";
-import { ArrowRight, Sparkles } from "lucide-react";
-import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
+import { useForm } from "react-hook-form";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  loginSchema,
+  onboardingSchema,
+  type LoginValues,
+  type OnboardingValues,
+} from "@/lib/validations";
 
-export default function HomePage() {
+const SESSION_STORAGE_KEY = "aura_session_token";
+
+type LoginResult = {
+  user: { id: string; name: string; username: string; role: string };
+  session_token: string | null;
+};
+
+function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <main className="relative flex min-h-screen flex-col overflow-hidden">
-      <header className="mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-6">
-        <span className="font-heading text-2xl font-semibold tracking-wide text-foreground">
+    <main className="flex min-h-screen items-center justify-center px-4 py-12">
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.45 }}
+        className="w-full max-w-md rounded-3xl border border-border/80 bg-card p-8 shadow-md backdrop-blur"
+      >
+        <span className="font-heading text-2xl font-semibold tracking-wide">
           Aura Studio
         </span>
-        <div className="flex items-center gap-2">
-          <Button variant="ghost" render={<Link href="/login" />}>
-            Iniciar sesión
-          </Button>
-          <Button render={<Link href="/register" />}>Crear cuenta</Button>
-        </div>
-      </header>
-
-      <section className="relative mx-auto flex w-full max-w-6xl flex-1 flex-col justify-center px-6 pb-20 pt-8">
-        <motion.div
-          initial={{ opacity: 0, y: 24 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6, ease: "easeOut" }}
-          className="max-w-2xl"
-        >
-          <p className="mb-4 inline-flex items-center gap-2 rounded-full bg-lavender/70 px-3 py-1 text-sm text-foreground/80">
-            <Sparkles className="size-3.5" />
-            Para centros estéticos
-          </p>
-          <h1 className="font-heading text-5xl leading-[1.1] font-semibold tracking-tight sm:text-6xl md:text-7xl">
-            Aura Studio
-          </h1>
-          <p className="mt-5 max-w-lg text-lg text-muted-foreground">
-            Gestiona productos, servicios y paquetes de tu centro con una
-            experiencia suave, clara y hecha para brillar sin gritar.
-          </p>
-          <div className="mt-8 flex flex-wrap gap-3">
-            <Button size="lg" render={<Link href="/register" />}>
-              Empezar gratis
-              <ArrowRight data-icon="inline-end" />
-            </Button>
-            <Button
-              size="lg"
-              variant="outline"
-              render={<Link href="/login" />}
-            >
-              Ya tengo cuenta
-            </Button>
-          </div>
-        </motion.div>
-
-        <motion.div
-          aria-hidden
-          initial={{ opacity: 0, scale: 0.92 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 0.8, delay: 0.15, ease: "easeOut" }}
-          className="pointer-events-none absolute right-0 top-1/2 hidden h-[420px] w-[420px] -translate-y-1/2 md:block"
-        >
-          <div className="absolute inset-8 rounded-full bg-lavender/50 blur-2xl" />
-          <div className="absolute inset-20 rounded-full bg-mint/60 blur-xl" />
-          <div className="absolute inset-32 rounded-full bg-cream/80 blur-lg" />
-        </motion.div>
-      </section>
+        {children}
+      </motion.div>
     </main>
+  );
+}
+
+function OnboardingForm({ onDone }: { onDone: () => void }) {
+  const [loading, setLoading] = useState(false);
+  const {
+    register,
+    handleSubmit,
+    formState: { errors },
+  } = useForm<OnboardingValues>({
+    resolver: zodResolver(onboardingSchema),
+    defaultValues: {
+      businessName: "",
+      ownerName: "",
+      ownerUsername: "",
+      ownerPassword: "",
+      confirmPassword: "",
+    },
+  });
+
+  const onSubmit = async (values: OnboardingValues) => {
+    setLoading(true);
+    try {
+      await invoke("onboarding_complete_setup", {
+        input: {
+          businessName: values.businessName,
+          ownerName: values.ownerName,
+          ownerUsername: values.ownerUsername,
+          ownerPassword: values.ownerPassword,
+        },
+      });
+      toast.success("Negocio configurado. Bienvenida a Aura Studio");
+      onDone();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <>
+      <h1 className="mt-6 font-heading text-3xl font-semibold">
+        Configura tu negocio
+      </h1>
+      <p className="mt-2 text-sm text-muted-foreground">
+        Es la primera vez que abres Aura Studio en este equipo. Crea tu
+        negocio y tu usuario de dueño/a.
+      </p>
+      <form onSubmit={handleSubmit(onSubmit)} className="mt-8 space-y-4">
+        <div className="space-y-2">
+          <Label htmlFor="businessName">Nombre del negocio</Label>
+          <Input
+            id="businessName"
+            placeholder="Spa Belleza Natural"
+            {...register("businessName")}
+          />
+          {errors.businessName && (
+            <p className="text-xs text-destructive">
+              {errors.businessName.message}
+            </p>
+          )}
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="ownerName">Tu nombre</Label>
+          <Input id="ownerName" {...register("ownerName")} />
+          {errors.ownerName && (
+            <p className="text-xs text-destructive">
+              {errors.ownerName.message}
+            </p>
+          )}
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="ownerUsername">Usuario</Label>
+          <Input
+            id="ownerUsername"
+            autoComplete="username"
+            {...register("ownerUsername")}
+          />
+          {errors.ownerUsername && (
+            <p className="text-xs text-destructive">
+              {errors.ownerUsername.message}
+            </p>
+          )}
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="ownerPassword">Contraseña</Label>
+          <Input
+            id="ownerPassword"
+            type="password"
+            autoComplete="new-password"
+            {...register("ownerPassword")}
+          />
+          {errors.ownerPassword && (
+            <p className="text-xs text-destructive">
+              {errors.ownerPassword.message}
+            </p>
+          )}
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="confirmPassword">Confirmar contraseña</Label>
+          <Input
+            id="confirmPassword"
+            type="password"
+            autoComplete="new-password"
+            {...register("confirmPassword")}
+          />
+          {errors.confirmPassword && (
+            <p className="text-xs text-destructive">
+              {errors.confirmPassword.message}
+            </p>
+          )}
+        </div>
+        <Button type="submit" className="w-full" disabled={loading}>
+          {loading ? "Creando..." : "Crear negocio"}
+        </Button>
+      </form>
+    </>
+  );
+}
+
+function LoginForm() {
+  const router = useRouter();
+  const [loading, setLoading] = useState(false);
+  const {
+    register,
+    handleSubmit,
+    formState: { errors },
+  } = useForm<LoginValues>({
+    resolver: zodResolver(loginSchema),
+    defaultValues: { username: "", password: "", rememberMe: true },
+  });
+
+  const onSubmit = async (values: LoginValues) => {
+    setLoading(true);
+    try {
+      const result = await invoke<LoginResult>("auth_login", {
+        username: values.username,
+        password: values.password,
+        rememberMe: values.rememberMe,
+      });
+      if (result.session_token) {
+        try {
+          localStorage.setItem(SESSION_STORAGE_KEY, result.session_token);
+        } catch {
+          // localStorage puede no estar disponible; no es crítico.
+        }
+      }
+      toast.success("Bienvenida de nuevo");
+      router.push("/admin");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <>
+      <h1 className="mt-6 font-heading text-3xl font-semibold">
+        Iniciar sesión
+      </h1>
+      <p className="mt-2 text-sm text-muted-foreground">
+        Accede al panel de tu negocio.
+      </p>
+      <form onSubmit={handleSubmit(onSubmit)} className="mt-8 space-y-4">
+        <div className="space-y-2">
+          <Label htmlFor="username">Usuario</Label>
+          <Input
+            id="username"
+            autoComplete="username"
+            {...register("username")}
+          />
+          {errors.username && (
+            <p className="text-xs text-destructive">
+              {errors.username.message}
+            </p>
+          )}
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="password">Contraseña</Label>
+          <Input
+            id="password"
+            type="password"
+            autoComplete="current-password"
+            {...register("password")}
+          />
+          {errors.password && (
+            <p className="text-xs text-destructive">
+              {errors.password.message}
+            </p>
+          )}
+        </div>
+        <Button type="submit" className="w-full" disabled={loading}>
+          {loading ? "Entrando..." : "Entrar"}
+        </Button>
+      </form>
+    </>
+  );
+}
+
+export default function Home() {
+  const router = useRouter();
+  const [stage, setStage] = useState<
+    "loading" | "onboarding" | "login" | "redirecting"
+  >("loading");
+
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      const complete = await invoke<boolean>("onboarding_is_complete");
+      if (cancelled) return;
+
+      if (!complete) {
+        setStage("onboarding");
+        return;
+      }
+
+      let token: string | null = null;
+      try {
+        token = localStorage.getItem(SESSION_STORAGE_KEY);
+      } catch {
+        token = null;
+      }
+
+      if (token) {
+        const user = await invoke<{ id: string } | null>(
+          "auth_resume_session",
+          { sessionToken: token }
+        );
+        if (!cancelled && user) {
+          setStage("redirecting");
+          router.replace("/admin");
+          return;
+        }
+      }
+
+      if (!cancelled) setStage("login");
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [router]);
+
+  if (stage === "loading" || stage === "redirecting") {
+    return <Shell>{null}</Shell>;
+  }
+
+  return (
+    <Shell>
+      {stage === "onboarding" ? (
+        <OnboardingForm onDone={() => router.push("/admin")} />
+      ) : (
+        <LoginForm />
+      )}
+    </Shell>
   );
 }

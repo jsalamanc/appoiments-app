@@ -1,16 +1,35 @@
+"use client";
+
+import { invoke } from "@tauri-apps/api/core";
 import Link from "next/link";
-import { redirect } from "next/navigation";
+import { useEffect, useState } from "react";
 
 import { FadeIn } from "@/components/motion/fade-in";
 import { Button } from "@/components/ui/button";
 import { isOwnerRole } from "@/lib/roles";
-import { getServerCenterContext } from "@/lib/supabase/center";
 
-export async function OwnerGate({ children }: { children: React.ReactNode }) {
-  const ctx = await getServerCenterContext();
-  if (!ctx) redirect("/login");
+type CurrentUser = { role: string } | null;
 
-  if (isOwnerRole(ctx.role)) {
+export function OwnerGate({ children }: { children: React.ReactNode }) {
+  const [user, setUser] = useState<CurrentUser>(null);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    invoke<CurrentUser>("auth_current_user").then((u) => {
+      if (!cancelled) {
+        setUser(u);
+        setLoaded(true);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (!loaded) return null;
+
+  if (isOwnerRole(user?.role)) {
     return <>{children}</>;
   }
 
@@ -22,7 +41,7 @@ export async function OwnerGate({ children }: { children: React.ReactNode }) {
           Solo el dueño puede ver esto
         </h1>
         <p className="mx-auto mt-2 max-w-md text-muted-foreground">
-          Tu rol de recepción no incluye ajustes ni reportes.
+          Tu rol de staff no incluye ajustes ni reportes.
         </p>
         <Button className="mt-6" render={<Link href="/admin" />}>
           Ir al panel
