@@ -14,6 +14,9 @@ permissions:
 
 jobs:
   create-branch:
+    # Solo para issues abiertos por el dueño o colaboradores del repo; así
+    # nadie externo puede crear ramas en masa abriendo issues.
+    if: contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.issue.author_association)
     runs-on: ubuntu-latest
     steps:
       - name: Crear y vincular rama
