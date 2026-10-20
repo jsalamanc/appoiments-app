@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 
 import { NetworkStatusHeader } from "@/components/admin/network-status-header";
 import { AdminSidebar } from "@/components/admin/sidebar";
+import { UpdateChecker } from "@/components/admin/update-checker";
 
 type CurrentUser = { id: string } | null;
 
@@ -38,6 +39,7 @@ export default function AdminLayout({
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden lg:flex-row">
+      <UpdateChecker />
       <AdminSidebar />
       <main className="min-h-0 flex-1 overflow-y-auto">
         <div className="print-hidden">
