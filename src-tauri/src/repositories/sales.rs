@@ -515,3 +515,522 @@ pub fn link_to_appointment(
     tx.commit()?;
     Ok(())
 }
+
+/// Implementación PostgreSQL (issue #9, Fase 2). `row_exists` queda genérico
+/// sobre `PgExecutor` porque se usa tanto contra el pool como dentro de las
+/// transacciones de `create_with_inventory`/`link_to_appointment`;
+/// `load_customer_ref`/`load_sale_items`/`sale_to_details` solo se usan a
+/// nivel de pool (igual que en la versión SQLite, donde tampoco corren dentro
+/// de una transacción), así que toman `&PgPool` directo.
+pub mod postgres {
+    use std::collections::HashMap;
+
+    use sqlx::{PgExecutor, PgPool, Row};
+
+    use crate::commands::sales::{
+        CashDaySummary, ListSalesResult, PaymentBreakdown, PaymentPeriods, PublishedCatalog,
+        RevenueMetrics, SaleItemInput,
+    };
+    use crate::db::new_id;
+    use crate::error::{AppError, AppResult};
+    use crate::models::package::Package;
+    use crate::models::product::Product;
+    use crate::models::sale::{CustomerRef, Sale, SaleItem, SaleWithDetails};
+    use crate::models::service::Service;
+    use crate::util::pagination::{get_range, get_total_pages, CATALOG_PAGE_SIZE};
+    use crate::util::period::period_from;
+
+    use super::round2;
+
+    pub async fn published_catalog(pool: &PgPool) -> AppResult<PublishedCatalog> {
+        let product_rows = sqlx::query("SELECT * FROM products WHERE status = 'published' ORDER BY name ASC")
+            .fetch_all(pool)
+            .await?;
+        let products = product_rows
+            .iter()
+            .map(Product::from_pg_row)
+            .collect::<AppResult<Vec<_>>>()?;
+
+        let service_rows = sqlx::query("SELECT * FROM services WHERE status = 'published' ORDER BY name ASC")
+            .fetch_all(pool)
+            .await?;
+        let services = service_rows
+            .iter()
+            .map(Service::from_pg_row)
+            .collect::<AppResult<Vec<_>>>()?;
+
+        let package_rows = sqlx::query("SELECT * FROM packages WHERE status = 'published' ORDER BY name ASC")
+            .fetch_all(pool)
+            .await?;
+        let packages = package_rows
+            .iter()
+            .map(Package::from_pg_row)
+            .collect::<AppResult<Vec<_>>>()?;
+
+        Ok(PublishedCatalog {
+            products,
+            services,
+            packages,
+        })
+    }
+
+    async fn row_exists<'e, E>(executor: E, sql: &str, id: &str) -> AppResult<bool>
+    where
+        E: PgExecutor<'e>,
+    {
+        let exists: bool = sqlx::query_scalar(sql).bind(id).fetch_one(executor).await?;
+        Ok(exists)
+    }
+
+    async fn load_customer_ref(pool: &PgPool, customer_id: &str) -> AppResult<CustomerRef> {
+        let row = sqlx::query("SELECT id, name, email, phone, document FROM customers WHERE id = $1")
+            .bind(customer_id)
+            .fetch_one(pool)
+            .await?;
+        Ok(CustomerRef {
+            id: row.try_get(0)?,
+            name: row.try_get(1)?,
+            email: row.try_get(2)?,
+            phone: row.try_get(3)?,
+            document: row.try_get(4)?,
+        })
+    }
+
+    async fn load_sale_items(pool: &PgPool, sale_id: &str) -> AppResult<Vec<SaleItem>> {
+        let rows = sqlx::query("SELECT * FROM sale_items WHERE sale_id = $1 ORDER BY created_at ASC")
+            .bind(sale_id)
+            .fetch_all(pool)
+            .await?;
+        rows.iter().map(SaleItem::from_pg_row).collect()
+    }
+
+    /// `period_from` (compartida con SQLite) devuelve un `String` RFC3339;
+    /// acá se re-parsea a `OffsetDateTime` para comparar nativamente contra
+    /// columnas `TIMESTAMPTZ`. Comparar como texto (`sold_at::text >= $1`)
+    /// sería incorrecto: el formato de texto por defecto de Postgres para
+    /// `timestamptz` no es RFC3339 (usa espacio en vez de `T`, `+00` en vez
+    /// de `Z`), así que la comparación lexicográfica no sería equivalente a
+    /// la comparación cronológica real.
+    fn parse_period(period: &str) -> AppResult<time::OffsetDateTime> {
+        let raw = period_from(period);
+        time::OffsetDateTime::parse(&raw, &time::format_description::well_known::Rfc3339)
+            .map_err(|e| AppError::Internal(e.to_string()))
+    }
+
+    async fn sale_to_details(pool: &PgPool, sale: Sale) -> AppResult<SaleWithDetails> {
+        let customers = load_customer_ref(pool, &sale.customer_id).await?;
+        let sale_items = load_sale_items(pool, &sale.id).await?;
+        Ok(SaleWithDetails {
+            id: sale.id,
+            customer_id: sale.customer_id,
+            appointment_id: sale.appointment_id,
+            payment_method: sale.payment_method,
+            total: sale.total,
+            sold_at: sale.sold_at,
+            created_at: sale.created_at,
+            customers,
+            sale_items,
+        })
+    }
+
+    pub async fn create_with_inventory(
+        pool: &PgPool,
+        customer_id: String,
+        payment_method: String,
+        items: Vec<SaleItemInput>,
+    ) -> AppResult<String> {
+        if payment_method != "cash" && payment_method != "transfer" {
+            return Err(AppError::validation("Método de pago inválido"));
+        }
+        if items.is_empty() {
+            return Err(AppError::validation("Agrega al menos un ítem a la venta"));
+        }
+        for item in &items {
+            if !["product", "service", "package"].contains(&item.item_type.as_str()) {
+                return Err(AppError::validation("Tipo de ítem inválido"));
+            }
+            if item.quantity < 1 {
+                return Err(AppError::validation("La cantidad debe ser al menos 1"));
+            }
+            if item.unit_price < 0.0 {
+                return Err(AppError::validation(
+                    "El precio unitario no puede ser negativo",
+                ));
+            }
+        }
+
+        let total = round2(
+            items
+                .iter()
+                .map(|item| round2(item.unit_price * item.quantity as f64))
+                .sum::<f64>(),
+        );
+
+        let mut product_qty: HashMap<String, i64> = HashMap::new();
+        for item in &items {
+            if item.item_type == "product" {
+                *product_qty.entry(item.item_id.clone()).or_insert(0) += item.quantity;
+            }
+        }
+
+        let mut tx = pool.begin().await?;
+
+        let customer_exists = row_exists(
+            &mut *tx,
+            "SELECT EXISTS(SELECT 1 FROM customers WHERE id = $1)",
+            &customer_id,
+        )
+        .await?;
+        if !customer_exists {
+            return Err(AppError::validation("El cliente no existe"));
+        }
+
+        for item in &items {
+            let published = match item.item_type.as_str() {
+                "product" => {
+                    row_exists(
+                        &mut *tx,
+                        "SELECT EXISTS(SELECT 1 FROM products WHERE id = $1 AND status = 'published')",
+                        &item.item_id,
+                    )
+                    .await?
+                }
+                "service" => {
+                    row_exists(
+                        &mut *tx,
+                        "SELECT EXISTS(SELECT 1 FROM services WHERE id = $1 AND status = 'published')",
+                        &item.item_id,
+                    )
+                    .await?
+                }
+                "package" => {
+                    row_exists(
+                        &mut *tx,
+                        "SELECT EXISTS(SELECT 1 FROM packages WHERE id = $1 AND status = 'published')",
+                        &item.item_id,
+                    )
+                    .await?
+                }
+                _ => false,
+            };
+            if !published {
+                return Err(AppError::validation(format!(
+                    "\"{}\" ya no está disponible para la venta",
+                    item.name
+                )));
+            }
+        }
+
+        for (product_id, needed) in product_qty.iter() {
+            let row = sqlx::query("SELECT name, stock FROM products WHERE id = $1")
+                .bind(product_id)
+                .fetch_one(&mut *tx)
+                .await?;
+            let name: String = row.try_get("name")?;
+            let stock: i64 = row.try_get("stock")?;
+            if stock < *needed {
+                return Err(AppError::validation(format!(
+                    "Stock insuficiente para {}",
+                    name
+                )));
+            }
+        }
+
+        let sale_id = new_id();
+
+        sqlx::query(
+            "INSERT INTO sales (id, customer_id, appointment_id, payment_method, total)
+             VALUES ($1, $2, NULL, $3, $4)",
+        )
+        .bind(&sale_id)
+        .bind(&customer_id)
+        .bind(&payment_method)
+        .bind(total)
+        .execute(&mut *tx)
+        .await?;
+
+        for item in &items {
+            let line_total = round2(item.unit_price * item.quantity as f64);
+            let (product_id, service_id, package_id): (Option<&str>, Option<&str>, Option<&str>) =
+                match item.item_type.as_str() {
+                    "product" => (Some(item.item_id.as_str()), None, None),
+                    "service" => (None, Some(item.item_id.as_str()), None),
+                    "package" => (None, None, Some(item.item_id.as_str())),
+                    _ => (None, None, None),
+                };
+
+            sqlx::query(
+                "INSERT INTO sale_items (
+                    id, sale_id, item_type, product_id, service_id, package_id,
+                    name_snapshot, unit_price, quantity, line_total
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+            )
+            .bind(new_id())
+            .bind(&sale_id)
+            .bind(&item.item_type)
+            .bind(product_id)
+            .bind(service_id)
+            .bind(package_id)
+            .bind(&item.name)
+            .bind(item.unit_price)
+            .bind(item.quantity)
+            .bind(line_total)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        for (product_id, qty) in product_qty.iter() {
+            sqlx::query("UPDATE products SET stock = stock - $1, updated_at = now() WHERE id = $2")
+                .bind(qty)
+                .bind(product_id)
+                .execute(&mut *tx)
+                .await?;
+
+            let stock_after: i64 = sqlx::query_scalar("SELECT stock FROM products WHERE id = $1")
+                .bind(product_id)
+                .fetch_one(&mut *tx)
+                .await?;
+
+            sqlx::query(
+                "INSERT INTO inventory_movements (
+                    id, product_id, movement_type, quantity_delta, stock_after, sale_id, note
+                ) VALUES ($1, $2, 'sale', $3, $4, $5, NULL)",
+            )
+            .bind(new_id())
+            .bind(product_id)
+            .bind(-qty)
+            .bind(stock_after)
+            .bind(&sale_id)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        tx.commit().await?;
+
+        Ok(sale_id)
+    }
+
+    pub async fn list(
+        pool: &PgPool,
+        page: Option<i64>,
+        page_size: Option<i64>,
+        payment_method: Option<String>,
+    ) -> AppResult<ListSalesResult> {
+        let page = page.unwrap_or(1).max(1);
+        let page_size = page_size.unwrap_or(CATALOG_PAGE_SIZE);
+        let payment_method = payment_method.unwrap_or_else(|| "all".to_string());
+        let filter_payment = matches!(payment_method.as_str(), "cash" | "transfer");
+
+        let total: i64 = if filter_payment {
+            sqlx::query_scalar("SELECT COUNT(*) FROM sales WHERE payment_method = $1")
+                .bind(&payment_method)
+                .fetch_one(pool)
+                .await?
+        } else {
+            sqlx::query_scalar("SELECT COUNT(*) FROM sales")
+                .fetch_one(pool)
+                .await?
+        };
+
+        let total_pages = get_total_pages(total, page_size);
+        let safe_page = page.min(total_pages);
+        let (limit, offset) = get_range(safe_page, page_size);
+
+        let sale_rows = if filter_payment {
+            sqlx::query(
+                "SELECT * FROM sales WHERE payment_method = $1
+                 ORDER BY sold_at DESC LIMIT $2 OFFSET $3",
+            )
+            .bind(&payment_method)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(pool)
+            .await?
+        } else {
+            sqlx::query("SELECT * FROM sales ORDER BY sold_at DESC LIMIT $1 OFFSET $2")
+                .bind(limit)
+                .bind(offset)
+                .fetch_all(pool)
+                .await?
+        };
+
+        let mut items = Vec::with_capacity(sale_rows.len());
+        for row in &sale_rows {
+            let sale = Sale::from_pg_row(row)?;
+            items.push(sale_to_details(pool, sale).await?);
+        }
+
+        Ok(ListSalesResult {
+            items,
+            total,
+            page: safe_page,
+            total_pages,
+            page_size,
+            payment_method,
+        })
+    }
+
+    pub async fn cash_day_summary(pool: &PgPool) -> AppResult<CashDaySummary> {
+        let from = period_from("day");
+        let from_dt = parse_period("day")?;
+
+        let sale_rows = sqlx::query("SELECT * FROM sales WHERE sold_at >= $1 ORDER BY sold_at DESC")
+            .bind(from_dt)
+            .fetch_all(pool)
+            .await?;
+
+        let mut sales = Vec::with_capacity(sale_rows.len());
+        for row in &sale_rows {
+            let sale = Sale::from_pg_row(row)?;
+            sales.push(sale_to_details(pool, sale).await?);
+        }
+
+        let sales_count = sales.len() as i64;
+        let total_revenue = round2(sales.iter().map(|s| s.total).sum());
+        let cash_count = sales.iter().filter(|s| s.payment_method == "cash").count() as i64;
+        let transfer_count = sales
+            .iter()
+            .filter(|s| s.payment_method == "transfer")
+            .count() as i64;
+        let cash_revenue = round2(
+            sales
+                .iter()
+                .filter(|s| s.payment_method == "cash")
+                .map(|s| s.total)
+                .sum(),
+        );
+        let transfer_revenue = round2(
+            sales
+                .iter()
+                .filter(|s| s.payment_method == "transfer")
+                .map(|s| s.total)
+                .sum(),
+        );
+
+        Ok(CashDaySummary {
+            sales,
+            sales_count,
+            total_revenue,
+            payments: PaymentBreakdown {
+                cash_count,
+                transfer_count,
+                cash_revenue,
+                transfer_revenue,
+            },
+            from,
+        })
+    }
+
+    pub async fn revenue_metrics(pool: &PgPool) -> AppResult<RevenueMetrics> {
+        let day_from = parse_period("day")?;
+        let week_from = parse_period("week")?;
+        let month_from = parse_period("month")?;
+
+        let row = sqlx::query(
+            "SELECT
+                COALESCE(SUM(total), 0) AS total_revenue,
+                COALESCE(SUM(CASE WHEN sold_at >= $1 THEN total ELSE 0 END), 0) AS day_revenue,
+                COALESCE(SUM(CASE WHEN sold_at >= $2 THEN total ELSE 0 END), 0) AS week_revenue,
+                COALESCE(SUM(CASE WHEN sold_at >= $3 THEN total ELSE 0 END), 0) AS month_revenue,
+                COUNT(*) AS sales_count,
+                COALESCE(SUM(CASE WHEN sold_at >= $1 AND payment_method = 'cash' THEN 1 ELSE 0 END), 0) AS day_cash_count,
+                COALESCE(SUM(CASE WHEN sold_at >= $1 AND payment_method = 'transfer' THEN 1 ELSE 0 END), 0) AS day_transfer_count,
+                COALESCE(SUM(CASE WHEN sold_at >= $1 AND payment_method = 'cash' THEN total ELSE 0 END), 0) AS day_cash_revenue,
+                COALESCE(SUM(CASE WHEN sold_at >= $1 AND payment_method = 'transfer' THEN total ELSE 0 END), 0) AS day_transfer_revenue,
+                COALESCE(SUM(CASE WHEN sold_at >= $2 AND payment_method = 'cash' THEN 1 ELSE 0 END), 0) AS week_cash_count,
+                COALESCE(SUM(CASE WHEN sold_at >= $2 AND payment_method = 'transfer' THEN 1 ELSE 0 END), 0) AS week_transfer_count,
+                COALESCE(SUM(CASE WHEN sold_at >= $2 AND payment_method = 'cash' THEN total ELSE 0 END), 0) AS week_cash_revenue,
+                COALESCE(SUM(CASE WHEN sold_at >= $2 AND payment_method = 'transfer' THEN total ELSE 0 END), 0) AS week_transfer_revenue,
+                COALESCE(SUM(CASE WHEN sold_at >= $3 AND payment_method = 'cash' THEN 1 ELSE 0 END), 0) AS month_cash_count,
+                COALESCE(SUM(CASE WHEN sold_at >= $3 AND payment_method = 'transfer' THEN 1 ELSE 0 END), 0) AS month_transfer_count,
+                COALESCE(SUM(CASE WHEN sold_at >= $3 AND payment_method = 'cash' THEN total ELSE 0 END), 0) AS month_cash_revenue,
+                COALESCE(SUM(CASE WHEN sold_at >= $3 AND payment_method = 'transfer' THEN total ELSE 0 END), 0) AS month_transfer_revenue,
+                COALESCE(SUM(CASE WHEN payment_method = 'cash' THEN 1 ELSE 0 END), 0) AS all_cash_count,
+                COALESCE(SUM(CASE WHEN payment_method = 'transfer' THEN 1 ELSE 0 END), 0) AS all_transfer_count,
+                COALESCE(SUM(CASE WHEN payment_method = 'cash' THEN total ELSE 0 END), 0) AS all_cash_revenue,
+                COALESCE(SUM(CASE WHEN payment_method = 'transfer' THEN total ELSE 0 END), 0) AS all_transfer_revenue
+             FROM sales",
+        )
+        .bind(day_from)
+        .bind(week_from)
+        .bind(month_from)
+        .fetch_one(pool)
+        .await?;
+
+        let day = PaymentBreakdown {
+            cash_count: row.try_get("day_cash_count")?,
+            transfer_count: row.try_get("day_transfer_count")?,
+            cash_revenue: row.try_get("day_cash_revenue")?,
+            transfer_revenue: row.try_get("day_transfer_revenue")?,
+        };
+        let week = PaymentBreakdown {
+            cash_count: row.try_get("week_cash_count")?,
+            transfer_count: row.try_get("week_transfer_count")?,
+            cash_revenue: row.try_get("week_cash_revenue")?,
+            transfer_revenue: row.try_get("week_transfer_revenue")?,
+        };
+        let month = PaymentBreakdown {
+            cash_count: row.try_get("month_cash_count")?,
+            transfer_count: row.try_get("month_transfer_count")?,
+            cash_revenue: row.try_get("month_cash_revenue")?,
+            transfer_revenue: row.try_get("month_transfer_revenue")?,
+        };
+        let all = PaymentBreakdown {
+            cash_count: row.try_get("all_cash_count")?,
+            transfer_count: row.try_get("all_transfer_count")?,
+            cash_revenue: row.try_get("all_cash_revenue")?,
+            transfer_revenue: row.try_get("all_transfer_revenue")?,
+        };
+
+        Ok(RevenueMetrics {
+            total_revenue: row.try_get("total_revenue")?,
+            day_revenue: row.try_get("day_revenue")?,
+            week_revenue: row.try_get("week_revenue")?,
+            month_revenue: row.try_get("month_revenue")?,
+            sales_count: row.try_get("sales_count")?,
+            payments: PaymentPeriods { day, week, month, all },
+        })
+    }
+
+    pub async fn link_to_appointment(
+        pool: &PgPool,
+        sale_id: String,
+        appointment_id: String,
+    ) -> AppResult<()> {
+        let mut tx = pool.begin().await?;
+
+        let sale_exists = row_exists(
+            &mut *tx,
+            "SELECT EXISTS(SELECT 1 FROM sales WHERE id = $1)",
+            &sale_id,
+        )
+        .await?;
+        if !sale_exists {
+            return Err(AppError::validation("La venta no existe"));
+        }
+
+        let appointment_exists = row_exists(
+            &mut *tx,
+            "SELECT EXISTS(SELECT 1 FROM appointments WHERE id = $1)",
+            &appointment_id,
+        )
+        .await?;
+        if !appointment_exists {
+            return Err(AppError::validation("La cita no existe"));
+        }
+
+        sqlx::query("UPDATE sales SET appointment_id = $1 WHERE id = $2")
+            .bind(&appointment_id)
+            .bind(&sale_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("UPDATE appointments SET sale_id = $1, updated_at = now() WHERE id = $2")
+            .bind(&sale_id)
+            .bind(&appointment_id)
+            .execute(&mut *tx)
+            .await?;
+
+        tx.commit().await?;
+        Ok(())
+    }
+}

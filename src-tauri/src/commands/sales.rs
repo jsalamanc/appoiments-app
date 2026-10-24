@@ -10,6 +10,7 @@
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
+use crate::app_db::AppDb;
 use crate::error::AppResult;
 use crate::models::package::Package;
 use crate::models::product::Product;
@@ -31,7 +32,10 @@ pub struct PublishedCatalog {
 
 #[tauri::command]
 pub async fn get_published_catalog(state: State<'_, AppState>) -> AppResult<PublishedCatalog> {
-    state.db.with_sqlite(repo::published_catalog).await
+    match &state.db {
+        AppDb::Sqlite(_) => state.db.with_sqlite(repo::published_catalog).await,
+        AppDb::Postgres(pool) => repo::postgres::published_catalog(pool).await,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -54,10 +58,19 @@ pub async fn create_sale_with_inventory(
     payment_method: String,
     items: Vec<SaleItemInput>,
 ) -> AppResult<String> {
-    state
-        .db
-        .with_sqlite(move |conn| repo::create_with_inventory(conn, customer_id, payment_method, items))
-        .await
+    match &state.db {
+        AppDb::Sqlite(_) => {
+            state
+                .db
+                .with_sqlite(move |conn| {
+                    repo::create_with_inventory(conn, customer_id, payment_method, items)
+                })
+                .await
+        }
+        AppDb::Postgres(pool) => {
+            repo::postgres::create_with_inventory(pool, customer_id, payment_method, items).await
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -81,10 +94,15 @@ pub async fn list_sales(
     page_size: Option<i64>,
     payment_method: Option<String>,
 ) -> AppResult<ListSalesResult> {
-    state
-        .db
-        .with_sqlite(move |conn| repo::list(conn, page, page_size, payment_method))
-        .await
+    match &state.db {
+        AppDb::Sqlite(_) => {
+            state
+                .db
+                .with_sqlite(move |conn| repo::list(conn, page, page_size, payment_method))
+                .await
+        }
+        AppDb::Postgres(pool) => repo::postgres::list(pool, page, page_size, payment_method).await,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -110,7 +128,10 @@ pub struct CashDaySummary {
 
 #[tauri::command]
 pub async fn get_cash_day_summary(state: State<'_, AppState>) -> AppResult<CashDaySummary> {
-    state.db.with_sqlite(repo::cash_day_summary).await
+    match &state.db {
+        AppDb::Sqlite(_) => state.db.with_sqlite(repo::cash_day_summary).await,
+        AppDb::Postgres(pool) => repo::postgres::cash_day_summary(pool).await,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -137,7 +158,10 @@ pub struct RevenueMetrics {
 
 #[tauri::command]
 pub async fn get_revenue_metrics(state: State<'_, AppState>) -> AppResult<RevenueMetrics> {
-    state.db.with_sqlite(repo::revenue_metrics).await
+    match &state.db {
+        AppDb::Sqlite(_) => state.db.with_sqlite(repo::revenue_metrics).await,
+        AppDb::Postgres(pool) => repo::postgres::revenue_metrics(pool).await,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -150,8 +174,13 @@ pub async fn link_sale_to_appointment(
     sale_id: String,
     appointment_id: String,
 ) -> AppResult<()> {
-    state
-        .db
-        .with_sqlite(move |conn| repo::link_to_appointment(conn, sale_id, appointment_id))
-        .await
+    match &state.db {
+        AppDb::Sqlite(_) => {
+            state
+                .db
+                .with_sqlite(move |conn| repo::link_to_appointment(conn, sale_id, appointment_id))
+                .await
+        }
+        AppDb::Postgres(pool) => repo::postgres::link_to_appointment(pool, sale_id, appointment_id).await,
+    }
 }

@@ -25,4 +25,25 @@ impl Product {
             updated_at: row.get("updated_at")?,
         })
     }
+
+    /// Equivalente PostgreSQL de `from_row` (issue #9, Fase 2). `stock` es
+    /// `INTEGER` (4 bytes) en Postgres, por lo que `sqlx` lo decodifica como
+    /// `i32`; se castea a `i64` para que el modelo sea idéntico en ambos
+    /// backends. Ver `crate::db::format_pg_timestamp` para el porqué del
+    /// formateo de `created_at`/`updated_at`.
+    pub fn from_pg_row(row: &sqlx::postgres::PgRow) -> crate::error::AppResult<Self> {
+        use sqlx::Row;
+        let created_at: time::OffsetDateTime = row.try_get("created_at")?;
+        let updated_at: time::OffsetDateTime = row.try_get("updated_at")?;
+        Ok(Self {
+            id: row.try_get("id")?,
+            name: row.try_get("name")?,
+            price: row.try_get("price")?,
+            photo_path: row.try_get("photo_path")?,
+            status: row.try_get("status")?,
+            stock: row.try_get("stock")?,
+            created_at: crate::db::format_pg_timestamp(created_at),
+            updated_at: crate::db::format_pg_timestamp(updated_at),
+        })
+    }
 }

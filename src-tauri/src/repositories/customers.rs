@@ -459,7 +459,7 @@ pub mod postgres {
                         package_id: r.try_get("package_id")?,
                         name_snapshot: r.try_get("name_snapshot")?,
                         unit_price: r.try_get("unit_price")?,
-                        quantity: r.try_get::<i32, _>("quantity")? as i64,
+                        quantity: r.try_get("quantity")?,
                         line_total: r.try_get("line_total")?,
                         created_at: ts(r, "created_at")?,
                     })
@@ -508,7 +508,7 @@ pub mod postgres {
                     id: service_id.clone().unwrap(),
                     name: row.try_get("service_name_snapshot")?,
                     price: row.try_get("svc_price")?,
-                    duration_minutes: row.try_get::<i32, _>("svc_duration")? as i64,
+                    duration_minutes: row.try_get("svc_duration")?,
                     status: row.try_get("svc_status")?,
                 })
             } else {

@@ -23,6 +23,22 @@ impl Sale {
             created_at: row.get("created_at")?,
         })
     }
+
+    /// Equivalente PostgreSQL de `from_row` (issue #9, Fase 2).
+    pub fn from_pg_row(row: &sqlx::postgres::PgRow) -> crate::error::AppResult<Self> {
+        use sqlx::Row;
+        let sold_at: time::OffsetDateTime = row.try_get("sold_at")?;
+        let created_at: time::OffsetDateTime = row.try_get("created_at")?;
+        Ok(Self {
+            id: row.try_get("id")?,
+            customer_id: row.try_get("customer_id")?,
+            appointment_id: row.try_get("appointment_id")?,
+            payment_method: row.try_get("payment_method")?,
+            total: row.try_get("total")?,
+            sold_at: crate::db::format_pg_timestamp(sold_at),
+            created_at: crate::db::format_pg_timestamp(created_at),
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,6 +70,27 @@ impl SaleItem {
             quantity: row.get("quantity")?,
             line_total: row.get("line_total")?,
             created_at: row.get("created_at")?,
+        })
+    }
+
+    /// Equivalente PostgreSQL de `from_row` (issue #9, Fase 2). `quantity` es
+    /// `INTEGER` (4 bytes) en Postgres, decodificado como `i32` por `sqlx`;
+    /// se castea a `i64` para que el modelo sea idéntico en ambos backends.
+    pub fn from_pg_row(row: &sqlx::postgres::PgRow) -> crate::error::AppResult<Self> {
+        use sqlx::Row;
+        let created_at: time::OffsetDateTime = row.try_get("created_at")?;
+        Ok(Self {
+            id: row.try_get("id")?,
+            sale_id: row.try_get("sale_id")?,
+            item_type: row.try_get("item_type")?,
+            product_id: row.try_get("product_id")?,
+            service_id: row.try_get("service_id")?,
+            package_id: row.try_get("package_id")?,
+            name_snapshot: row.try_get("name_snapshot")?,
+            unit_price: row.try_get("unit_price")?,
+            quantity: row.try_get("quantity")?,
+            line_total: row.try_get("line_total")?,
+            created_at: crate::db::format_pg_timestamp(created_at),
         })
     }
 }

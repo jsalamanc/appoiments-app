@@ -13,6 +13,11 @@
 --   * instr(email, '@') > 1 -> position('@' in email) > 1.
 --   * REAL -> DOUBLE PRECISION (mismo comportamiento de punto flotante que
 --     SQLite REAL; no se introduce NUMERIC para no cambiar semántica).
+--   * Los contadores/cantidades (stock, duration_minutes, quantity,
+--     quantity_delta, stock_after) son BIGINT, no INTEGER: todos los modelos
+--     Rust ya los tipan como `i64`, y `sqlx` decodifica `INTEGER` (4 bytes)
+--     de Postgres como `i32`, no como `i64` — con BIGINT no hace falta
+--     castear en cada lectura/escritura de la capa de repositorios.
 
 CREATE TABLE business_profile (
   id SMALLINT PRIMARY KEY CHECK (id = 1),
@@ -65,7 +70,7 @@ CREATE TABLE products (
   price DOUBLE PRECISION NOT NULL CHECK (price >= 0),
   photo_path TEXT,
   status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','published')),
-  stock INTEGER NOT NULL DEFAULT 0 CHECK (stock >= 0),
+  stock BIGINT NOT NULL DEFAULT 0 CHECK (stock >= 0),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -77,7 +82,7 @@ CREATE TABLE services (
   name TEXT NOT NULL,
   description TEXT,
   price DOUBLE PRECISION NOT NULL CHECK (price >= 0),
-  duration_minutes INTEGER NOT NULL CHECK (duration_minutes > 0),
+  duration_minutes BIGINT NOT NULL CHECK (duration_minutes > 0),
   photo_path TEXT,
   status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','published')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -103,7 +108,7 @@ CREATE TABLE package_items (
   item_type TEXT NOT NULL CHECK (item_type IN ('product','service')),
   product_id TEXT REFERENCES products (id) ON DELETE CASCADE,
   service_id TEXT REFERENCES services (id) ON DELETE CASCADE,
-  quantity INTEGER NOT NULL DEFAULT 1 CHECK (quantity >= 1),
+  quantity BIGINT NOT NULL DEFAULT 1 CHECK (quantity >= 1),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CHECK (
     (item_type = 'product' AND product_id IS NOT NULL AND service_id IS NULL)
@@ -166,7 +171,7 @@ CREATE TABLE sale_items (
   package_id TEXT REFERENCES packages (id) ON DELETE SET NULL,
   name_snapshot TEXT NOT NULL,
   unit_price DOUBLE PRECISION NOT NULL CHECK (unit_price >= 0),
-  quantity INTEGER NOT NULL CHECK (quantity >= 1),
+  quantity BIGINT NOT NULL CHECK (quantity >= 1),
   line_total DOUBLE PRECISION NOT NULL CHECK (line_total >= 0),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CHECK (
@@ -181,8 +186,8 @@ CREATE TABLE inventory_movements (
   id TEXT PRIMARY KEY,
   product_id TEXT NOT NULL REFERENCES products (id) ON DELETE CASCADE,
   movement_type TEXT NOT NULL CHECK (movement_type IN ('initial','adjustment','sale')),
-  quantity_delta INTEGER NOT NULL CHECK (quantity_delta <> 0),
-  stock_after INTEGER NOT NULL CHECK (stock_after >= 0),
+  quantity_delta BIGINT NOT NULL CHECK (quantity_delta <> 0),
+  stock_after BIGINT NOT NULL CHECK (stock_after >= 0),
   sale_id TEXT REFERENCES sales (id) ON DELETE SET NULL,
   note TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()

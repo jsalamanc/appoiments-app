@@ -1,6 +1,7 @@
 use serde::Deserialize;
 use tauri::State;
 
+use crate::app_db::AppDb;
 use crate::commands::customers::{AppointmentWithDetails, ServiceRef};
 use crate::error::AppResult;
 use crate::models::appointment::Appointment;
@@ -14,10 +15,15 @@ pub async fn list_appointments_in_range(
     to: String,
     employee_id: Option<String>,
 ) -> AppResult<Vec<AppointmentWithDetails>> {
-    state
-        .db
-        .with_sqlite(move |conn| repo::list_in_range(conn, from, to, employee_id))
-        .await
+    match &state.db {
+        AppDb::Sqlite(_) => {
+            state
+                .db
+                .with_sqlite(move |conn| repo::list_in_range(conn, from, to, employee_id))
+                .await
+        }
+        AppDb::Postgres(pool) => repo::postgres::list_in_range(pool, from, to, employee_id).await,
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -35,7 +41,10 @@ pub async fn create_appointment(
     state: State<'_, AppState>,
     input: AppointmentInput,
 ) -> AppResult<Appointment> {
-    state.db.with_sqlite(move |conn| repo::create(conn, input)).await
+    match &state.db {
+        AppDb::Sqlite(_) => state.db.with_sqlite(move |conn| repo::create(conn, input)).await,
+        AppDb::Postgres(pool) => repo::postgres::create(pool, input).await,
+    }
 }
 
 #[tauri::command]
@@ -44,10 +53,15 @@ pub async fn update_appointment(
     id: String,
     input: AppointmentInput,
 ) -> AppResult<Appointment> {
-    state
-        .db
-        .with_sqlite(move |conn| repo::update(conn, id, input))
-        .await
+    match &state.db {
+        AppDb::Sqlite(_) => {
+            state
+                .db
+                .with_sqlite(move |conn| repo::update(conn, id, input))
+                .await
+        }
+        AppDb::Postgres(pool) => repo::postgres::update(pool, id, input).await,
+    }
 }
 
 #[tauri::command]
@@ -56,10 +70,15 @@ pub async fn set_appointment_status(
     appointment_id: String,
     status: String,
 ) -> AppResult<Appointment> {
-    state
-        .db
-        .with_sqlite(move |conn| repo::set_status(conn, appointment_id, status))
-        .await
+    match &state.db {
+        AppDb::Sqlite(_) => {
+            state
+                .db
+                .with_sqlite(move |conn| repo::set_status(conn, appointment_id, status))
+                .await
+        }
+        AppDb::Postgres(pool) => repo::postgres::set_status(pool, appointment_id, status).await,
+    }
 }
 
 /// Hoy `completeAppointmentWithSale` (src/lib/appointments.ts) hace dos
@@ -75,10 +94,15 @@ pub async fn complete_appointment_with_sale(
     appointment_id: String,
     sale_id: String,
 ) -> AppResult<()> {
-    state
-        .db
-        .with_sqlite(move |conn| repo::complete_with_sale(conn, appointment_id, sale_id))
-        .await
+    match &state.db {
+        AppDb::Sqlite(_) => {
+            state
+                .db
+                .with_sqlite(move |conn| repo::complete_with_sale(conn, appointment_id, sale_id))
+                .await
+        }
+        AppDb::Postgres(pool) => repo::postgres::complete_with_sale(pool, appointment_id, sale_id).await,
+    }
 }
 
 /// Lectura mínima y de solo lectura para el selector de servicio del
@@ -91,5 +115,8 @@ pub async fn complete_appointment_with_sale(
 pub async fn list_published_services_for_appointments(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<ServiceRef>> {
-    state.db.with_sqlite(repo::list_published_services).await
+    match &state.db {
+        AppDb::Sqlite(_) => state.db.with_sqlite(repo::list_published_services).await,
+        AppDb::Postgres(pool) => repo::postgres::list_published_services(pool).await,
+    }
 }
