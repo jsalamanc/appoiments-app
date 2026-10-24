@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
 
+use crate::app_db::AppDb;
 use crate::error::{AppError, AppResult};
 use crate::models::product::Product;
 use crate::repositories::products as repo;
@@ -26,15 +27,23 @@ pub async fn list_products(
     page: Option<i64>,
     page_size: Option<i64>,
 ) -> AppResult<ListProductsResult> {
-    state
-        .db
-        .with_sqlite(move |conn| repo::list(conn, status, page, page_size))
-        .await
+    match &state.db {
+        AppDb::Sqlite(_) => {
+            state
+                .db
+                .with_sqlite(move |conn| repo::list(conn, status, page, page_size))
+                .await
+        }
+        AppDb::Postgres(pool) => repo::postgres::list(pool, status, page, page_size).await,
+    }
 }
 
 #[tauri::command]
 pub async fn get_product(state: State<'_, AppState>, id: String) -> AppResult<Option<Product>> {
-    state.db.with_sqlite(move |conn| repo::get(conn, id)).await
+    match &state.db {
+        AppDb::Sqlite(_) => state.db.with_sqlite(move |conn| repo::get(conn, id)).await,
+        AppDb::Postgres(pool) => repo::postgres::get(pool, id).await,
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -51,7 +60,10 @@ pub async fn create_product(
     state: State<'_, AppState>,
     input: ProductInput,
 ) -> AppResult<Product> {
-    state.db.with_sqlite(move |conn| repo::create(conn, input)).await
+    match &state.db {
+        AppDb::Sqlite(_) => state.db.with_sqlite(move |conn| repo::create(conn, input)).await,
+        AppDb::Postgres(pool) => repo::postgres::create(pool, input).await,
+    }
 }
 
 #[tauri::command]
@@ -60,15 +72,23 @@ pub async fn update_product(
     id: String,
     input: ProductInput,
 ) -> AppResult<Product> {
-    state
-        .db
-        .with_sqlite(move |conn| repo::update(conn, id, input))
-        .await
+    match &state.db {
+        AppDb::Sqlite(_) => {
+            state
+                .db
+                .with_sqlite(move |conn| repo::update(conn, id, input))
+                .await
+        }
+        AppDb::Postgres(pool) => repo::postgres::update(pool, id, input).await,
+    }
 }
 
 #[tauri::command]
 pub async fn delete_product(state: State<'_, AppState>, id: String) -> AppResult<()> {
-    state.db.with_sqlite(move |conn| repo::delete(conn, id)).await
+    match &state.db {
+        AppDb::Sqlite(_) => state.db.with_sqlite(move |conn| repo::delete(conn, id)).await,
+        AppDb::Postgres(pool) => repo::postgres::delete(pool, id).await,
+    }
 }
 
 /// Replica la función Postgres `set_product_stock`: tipo de movimiento
@@ -81,10 +101,15 @@ pub async fn set_product_stock(
     stock: i64,
     note: Option<String>,
 ) -> AppResult<i64> {
-    state
-        .db
-        .with_sqlite(move |conn| repo::set_stock(conn, product_id, stock, note))
-        .await
+    match &state.db {
+        AppDb::Sqlite(_) => {
+            state
+                .db
+                .with_sqlite(move |conn| repo::set_stock(conn, product_id, stock, note))
+                .await
+        }
+        AppDb::Postgres(pool) => repo::postgres::set_stock(pool, product_id, stock, note).await,
+    }
 }
 
 /// Copia la foto elegida por el usuario (file picker, ruta absoluta) al
@@ -98,10 +123,15 @@ pub async fn import_product_photo(
     product_id: String,
     source_file_path: String,
 ) -> AppResult<String> {
-    state
-        .db
-        .with_sqlite(move |conn| repo::assert_exists(conn, &product_id))
-        .await?;
+    match &state.db {
+        AppDb::Sqlite(_) => {
+            state
+                .db
+                .with_sqlite(move |conn| repo::assert_exists(conn, &product_id))
+                .await?
+        }
+        AppDb::Postgres(pool) => repo::postgres::assert_exists(pool, &product_id).await?,
+    }
 
     let data_dir = app.path().app_data_dir().map_err(|e| {
         AppError::Internal(format!("no se pudo resolver el directorio de datos: {e}"))

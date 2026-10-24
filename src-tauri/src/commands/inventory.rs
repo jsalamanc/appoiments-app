@@ -1,6 +1,7 @@
 use serde::Serialize;
 use tauri::State;
 
+use crate::app_db::AppDb;
 use crate::error::AppResult;
 use crate::models::inventory::InventoryMovement;
 use crate::models::product::Product;
@@ -24,10 +25,15 @@ pub async fn list_low_stock_products(
     state: State<'_, AppState>,
     threshold: Option<i64>,
 ) -> AppResult<LowStockResult> {
-    state
-        .db
-        .with_sqlite(move |conn| repo::list_low_stock(conn, threshold))
-        .await
+    match &state.db {
+        AppDb::Sqlite(_) => {
+            state
+                .db
+                .with_sqlite(move |conn| repo::list_low_stock(conn, threshold))
+                .await
+        }
+        AppDb::Postgres(pool) => repo::postgres::list_low_stock(pool, threshold).await,
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -46,8 +52,13 @@ pub async fn list_inventory_movements(
     page: Option<i64>,
     page_size: Option<i64>,
 ) -> AppResult<ListInventoryMovementsResult> {
-    state
-        .db
-        .with_sqlite(move |conn| repo::list_movements(conn, product_id, page, page_size))
-        .await
+    match &state.db {
+        AppDb::Sqlite(_) => {
+            state
+                .db
+                .with_sqlite(move |conn| repo::list_movements(conn, product_id, page, page_size))
+                .await
+        }
+        AppDb::Postgres(pool) => repo::postgres::list_movements(pool, product_id, page, page_size).await,
+    }
 }

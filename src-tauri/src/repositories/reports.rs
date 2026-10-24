@@ -214,3 +214,237 @@ pub fn no_shows(conn: &mut Connection, period: String) -> AppResult<NoShowsRepor
         recent,
     })
 }
+
+/// Implementación PostgreSQL (issue #9, Fase 2) — misma lógica de agregación
+/// que arriba, adaptada al driver async `sqlx`.
+///
+/// IMPORTANTE: `starts_at`/`sold_at` son `TIMESTAMPTZ` en Postgres (no texto
+/// como en SQLite), así que comparar contra la cadena RFC3339 de
+/// `period_from` requiere parsearla primero a `time::OffsetDateTime` y
+/// bindearla nativamente — nunca castear la columna a texto
+/// (`col::text >= $1`), porque la representación textual por defecto de
+/// Postgres para `timestamptz` ("2024-01-15 10:30:00+00") no es RFC3339 y una
+/// comparación lexicográfica contra ella no es confiablemente equivalente a
+/// una comparación cronológica.
+pub mod postgres {
+    use sqlx::{PgPool, Row};
+
+    use crate::commands::reports::{
+        EmployeePerformanceReport, EmployeePerformanceRow, NoShowCustomerRow, NoShowsReport,
+        RecentCustomerRef, RecentNoShowRow, TopServiceRow, TopServicesReport,
+    };
+    use crate::db::format_pg_timestamp;
+    use crate::error::{AppError, AppResult};
+
+    fn parse_period(period: &str) -> AppResult<time::OffsetDateTime> {
+        let raw = crate::util::period::period_from(period);
+        time::OffsetDateTime::parse(&raw, &time::format_description::well_known::Rfc3339)
+            .map_err(|e| AppError::Internal(e.to_string()))
+    }
+
+    pub async fn employee_performance(
+        pool: &PgPool,
+        period: String,
+    ) -> AppResult<EmployeePerformanceReport> {
+        let from = parse_period(&period)?;
+
+        let rows = sqlx::query(
+            "SELECT
+                e.id AS employee_id,
+                e.name AS name,
+                e.color AS color,
+                COUNT(CASE WHEN a.status = 'scheduled' THEN 1 END) AS scheduled,
+                COUNT(CASE WHEN a.status = 'completed' THEN 1 END) AS completed,
+                COUNT(CASE WHEN a.status = 'cancelled' THEN 1 END) AS cancelled,
+                COUNT(CASE WHEN a.status = 'no_show' THEN 1 END) AS no_show,
+                COUNT(a.id) AS total_appointments,
+                COALESCE(SUM(s.total), 0.0) AS revenue
+             FROM employees e
+             LEFT JOIN appointments a
+                ON a.employee_id = e.id AND a.starts_at >= $1
+             LEFT JOIN sales s ON s.id = a.sale_id
+             GROUP BY e.id, e.name, e.color
+             ORDER BY completed DESC, revenue DESC, e.name ASC",
+        )
+        .bind(from)
+        .fetch_all(pool)
+        .await?;
+
+        let rows = rows
+            .iter()
+            .map(|row| -> AppResult<EmployeePerformanceRow> {
+                Ok(EmployeePerformanceRow {
+                    employee_id: row.try_get("employee_id")?,
+                    name: row.try_get("name")?,
+                    color: row.try_get("color")?,
+                    scheduled: row.try_get("scheduled")?,
+                    completed: row.try_get("completed")?,
+                    cancelled: row.try_get("cancelled")?,
+                    no_show: row.try_get("no_show")?,
+                    total_appointments: row.try_get("total_appointments")?,
+                    revenue: row.try_get("revenue")?,
+                })
+            })
+            .collect::<AppResult<Vec<_>>>()?;
+
+        Ok(EmployeePerformanceReport {
+            period,
+            from: format_pg_timestamp(from),
+            rows,
+        })
+    }
+
+    pub async fn top_services(pool: &PgPool, period: String) -> AppResult<TopServicesReport> {
+        let from = parse_period(&period)?;
+
+        let totals_row = sqlx::query(
+            "SELECT COUNT(*) AS sales_count, COALESCE(SUM(total), 0.0) AS total_revenue
+             FROM sales WHERE sold_at >= $1",
+        )
+        .bind(from)
+        .fetch_one(pool)
+        .await?;
+        let sales_count: i64 = totals_row.try_get("sales_count")?;
+        let total_revenue: f64 = totals_row.try_get("total_revenue")?;
+
+        let average_ticket = if sales_count == 0 {
+            0.0
+        } else {
+            total_revenue / sales_count as f64
+        };
+
+        let rows = sqlx::query(
+            "SELECT
+                si.service_id AS service_id,
+                MIN(si.name_snapshot) AS name,
+                SUM(si.quantity) AS quantity,
+                SUM(si.line_total) AS revenue
+             FROM sale_items si
+             JOIN sales s ON s.id = si.sale_id
+             WHERE si.item_type = 'service' AND s.sold_at >= $1
+             GROUP BY COALESCE(si.service_id, si.name_snapshot)
+             ORDER BY quantity DESC, revenue DESC",
+        )
+        .bind(from)
+        .fetch_all(pool)
+        .await?;
+
+        let rows = rows
+            .iter()
+            .map(|row| -> AppResult<TopServiceRow> {
+                Ok(TopServiceRow {
+                    service_id: row.try_get("service_id")?,
+                    name: row.try_get("name")?,
+                    quantity: row.try_get("quantity")?,
+                    revenue: row.try_get("revenue")?,
+                })
+            })
+            .collect::<AppResult<Vec<_>>>()?;
+
+        Ok(TopServicesReport {
+            period,
+            from: format_pg_timestamp(from),
+            sales_count,
+            total_revenue,
+            average_ticket,
+            rows,
+        })
+    }
+
+    pub async fn no_shows(pool: &PgPool, period: String) -> AppResult<NoShowsReport> {
+        let from = parse_period(&period)?;
+
+        let totals_row = sqlx::query(
+            "SELECT
+                COUNT(CASE WHEN status = 'no_show' THEN 1 END) AS no_show_total,
+                COUNT(CASE WHEN status = 'cancelled' THEN 1 END) AS cancelled_total
+             FROM appointments
+             WHERE starts_at >= $1 AND status IN ('no_show', 'cancelled')",
+        )
+        .bind(from)
+        .fetch_one(pool)
+        .await?;
+        let no_show_total: i64 = totals_row.try_get("no_show_total")?;
+        let cancelled_total: i64 = totals_row.try_get("cancelled_total")?;
+
+        let rows = sqlx::query(
+            "SELECT
+                c.id AS customer_id,
+                c.name AS name,
+                c.email AS email,
+                c.phone AS phone,
+                COUNT(CASE WHEN a.status = 'no_show' THEN 1 END) AS no_show_count,
+                COUNT(CASE WHEN a.status = 'cancelled' THEN 1 END) AS cancelled_count,
+                COUNT(a.id) AS lost_count
+             FROM appointments a
+             JOIN customers c ON c.id = a.customer_id
+             WHERE a.starts_at >= $1 AND a.status IN ('no_show', 'cancelled')
+             GROUP BY c.id, c.name, c.email, c.phone
+             ORDER BY lost_count DESC, c.name ASC",
+        )
+        .bind(from)
+        .fetch_all(pool)
+        .await?;
+
+        let rows = rows
+            .iter()
+            .map(|row| -> AppResult<NoShowCustomerRow> {
+                Ok(NoShowCustomerRow {
+                    customer_id: row.try_get("customer_id")?,
+                    name: row.try_get("name")?,
+                    email: row.try_get("email")?,
+                    phone: row.try_get("phone")?,
+                    no_show_count: row.try_get("no_show_count")?,
+                    cancelled_count: row.try_get("cancelled_count")?,
+                    lost_count: row.try_get("lost_count")?,
+                })
+            })
+            .collect::<AppResult<Vec<_>>>()?;
+
+        let recent_rows = sqlx::query(
+            "SELECT
+                a.id AS id,
+                a.status AS status,
+                a.starts_at AS starts_at,
+                c.id AS cust_id,
+                c.name AS cust_name,
+                c.email AS cust_email,
+                c.phone AS cust_phone
+             FROM appointments a
+             JOIN customers c ON c.id = a.customer_id
+             WHERE a.starts_at >= $1 AND a.status IN ('no_show', 'cancelled')
+             ORDER BY a.starts_at DESC
+             LIMIT 30",
+        )
+        .bind(from)
+        .fetch_all(pool)
+        .await?;
+
+        let recent = recent_rows
+            .iter()
+            .map(|row| -> AppResult<RecentNoShowRow> {
+                let starts_at: time::OffsetDateTime = row.try_get("starts_at")?;
+                Ok(RecentNoShowRow {
+                    id: row.try_get("id")?,
+                    status: row.try_get("status")?,
+                    starts_at: format_pg_timestamp(starts_at),
+                    customers: Some(RecentCustomerRef {
+                        id: row.try_get("cust_id")?,
+                        name: row.try_get("cust_name")?,
+                        email: row.try_get("cust_email")?,
+                        phone: row.try_get("cust_phone")?,
+                    }),
+                })
+            })
+            .collect::<AppResult<Vec<_>>>()?;
+
+        Ok(NoShowsReport {
+            period,
+            from: format_pg_timestamp(from),
+            no_show_total,
+            cancelled_total,
+            rows,
+            recent,
+        })
+    }
+}

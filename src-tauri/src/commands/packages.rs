@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
 
+use crate::app_db::AppDb;
 use crate::error::{AppError, AppResult};
 use crate::repositories::packages as repo;
 use crate::state::AppState;
@@ -66,10 +67,15 @@ pub async fn list_packages(
     page: Option<i64>,
     page_size: Option<i64>,
 ) -> AppResult<ListPackagesResult> {
-    state
-        .db
-        .with_sqlite(move |conn| repo::list(conn, status, page, page_size))
-        .await
+    match &state.db {
+        AppDb::Sqlite(_) => {
+            state
+                .db
+                .with_sqlite(move |conn| repo::list(conn, status, page, page_size))
+                .await
+        }
+        AppDb::Postgres(pool) => repo::postgres::list(pool, status, page, page_size).await,
+    }
 }
 
 #[tauri::command]
@@ -77,7 +83,10 @@ pub async fn get_package(
     state: State<'_, AppState>,
     id: String,
 ) -> AppResult<Option<PackageWithItems>> {
-    state.db.with_sqlite(move |conn| repo::get(conn, id)).await
+    match &state.db {
+        AppDb::Sqlite(_) => state.db.with_sqlite(move |conn| repo::get(conn, id)).await,
+        AppDb::Postgres(pool) => repo::postgres::get(pool, id).await,
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -104,10 +113,15 @@ pub async fn create_package(
     state: State<'_, AppState>,
     input: PackageInput,
 ) -> AppResult<PackageWithItems> {
-    state
-        .db
-        .with_sqlite(move |conn| repo::create(conn, input))
-        .await
+    match &state.db {
+        AppDb::Sqlite(_) => {
+            state
+                .db
+                .with_sqlite(move |conn| repo::create(conn, input))
+                .await
+        }
+        AppDb::Postgres(pool) => repo::postgres::create(pool, input).await,
+    }
 }
 
 #[tauri::command]
@@ -116,15 +130,23 @@ pub async fn update_package(
     id: String,
     input: PackageInput,
 ) -> AppResult<PackageWithItems> {
-    state
-        .db
-        .with_sqlite(move |conn| repo::update(conn, id, input))
-        .await
+    match &state.db {
+        AppDb::Sqlite(_) => {
+            state
+                .db
+                .with_sqlite(move |conn| repo::update(conn, id, input))
+                .await
+        }
+        AppDb::Postgres(pool) => repo::postgres::update(pool, id, input).await,
+    }
 }
 
 #[tauri::command]
 pub async fn delete_package(state: State<'_, AppState>, id: String) -> AppResult<()> {
-    state.db.with_sqlite(move |conn| repo::delete(conn, id)).await
+    match &state.db {
+        AppDb::Sqlite(_) => state.db.with_sqlite(move |conn| repo::delete(conn, id)).await,
+        AppDb::Postgres(pool) => repo::postgres::delete(pool, id).await,
+    }
 }
 
 #[tauri::command]
@@ -134,10 +156,17 @@ pub async fn import_package_photo(
     package_id: String,
     source_file_path: String,
 ) -> AppResult<String> {
-    state
-        .db
-        .with_sqlite(move |conn| repo::assert_exists(conn, &package_id))
-        .await?;
+    match &state.db {
+        AppDb::Sqlite(_) => {
+            state
+                .db
+                .with_sqlite(move |conn| repo::assert_exists(conn, &package_id))
+                .await?;
+        }
+        AppDb::Postgres(pool) => {
+            repo::postgres::assert_exists(pool, &package_id).await?;
+        }
+    }
 
     let data_dir = app.path().app_data_dir().map_err(|e| {
         AppError::Internal(format!("no se pudo resolver el directorio de datos: {e}"))

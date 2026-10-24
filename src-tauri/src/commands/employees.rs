@@ -1,6 +1,7 @@
 use serde::Deserialize;
 use tauri::State;
 
+use crate::app_db::AppDb;
 use crate::error::AppResult;
 use crate::models::employee::Employee;
 use crate::repositories::employees as repo;
@@ -11,10 +12,15 @@ pub async fn list_employees(
     state: State<'_, AppState>,
     active_only: Option<bool>,
 ) -> AppResult<Vec<Employee>> {
-    state
-        .db
-        .with_sqlite(move |conn| repo::list(conn, active_only))
-        .await
+    match &state.db {
+        AppDb::Sqlite(_) => {
+            state
+                .db
+                .with_sqlite(move |conn| repo::list(conn, active_only))
+                .await
+        }
+        AppDb::Postgres(pool) => repo::postgres::list(pool, active_only).await,
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -29,7 +35,10 @@ pub async fn create_employee(
     state: State<'_, AppState>,
     input: EmployeeInput,
 ) -> AppResult<Employee> {
-    state.db.with_sqlite(move |conn| repo::create(conn, input)).await
+    match &state.db {
+        AppDb::Sqlite(_) => state.db.with_sqlite(move |conn| repo::create(conn, input)).await,
+        AppDb::Postgres(pool) => repo::postgres::create(pool, input).await,
+    }
 }
 
 #[tauri::command]
@@ -38,10 +47,15 @@ pub async fn update_employee(
     id: String,
     input: EmployeeInput,
 ) -> AppResult<Employee> {
-    state
-        .db
-        .with_sqlite(move |conn| repo::update(conn, id, input))
-        .await
+    match &state.db {
+        AppDb::Sqlite(_) => {
+            state
+                .db
+                .with_sqlite(move |conn| repo::update(conn, id, input))
+                .await
+        }
+        AppDb::Postgres(pool) => repo::postgres::update(pool, id, input).await,
+    }
 }
 
 /// Falla con un mensaje claro si el empleado tiene citas asociadas: el
@@ -54,5 +68,8 @@ pub async fn update_employee(
 /// vez de eliminar.
 #[tauri::command]
 pub async fn delete_employee(state: State<'_, AppState>, id: String) -> AppResult<()> {
-    state.db.with_sqlite(move |conn| repo::delete(conn, id)).await
+    match &state.db {
+        AppDb::Sqlite(_) => state.db.with_sqlite(move |conn| repo::delete(conn, id)).await,
+        AppDb::Postgres(pool) => repo::postgres::delete(pool, id).await,
+    }
 }

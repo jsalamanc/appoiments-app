@@ -1,6 +1,7 @@
 use serde::Serialize;
 use tauri::State;
 
+use crate::app_db::AppDb;
 use crate::error::AppResult;
 use crate::repositories::reports as repo;
 use crate::state::AppState;
@@ -44,10 +45,15 @@ pub async fn get_employee_performance_report(
     period: String,
 ) -> AppResult<EmployeePerformanceReport> {
     state.require_owner()?;
-    state
-        .db
-        .with_sqlite(move |conn| repo::employee_performance(conn, period))
-        .await
+    match &state.db {
+        AppDb::Sqlite(_) => {
+            state
+                .db
+                .with_sqlite(move |conn| repo::employee_performance(conn, period))
+                .await
+        }
+        AppDb::Postgres(pool) => repo::postgres::employee_performance(pool, period).await,
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -94,10 +100,15 @@ pub async fn get_top_services_report(
     period: String,
 ) -> AppResult<TopServicesReport> {
     state.require_owner()?;
-    state
-        .db
-        .with_sqlite(move |conn| repo::top_services(conn, period))
-        .await
+    match &state.db {
+        AppDb::Sqlite(_) => {
+            state
+                .db
+                .with_sqlite(move |conn| repo::top_services(conn, period))
+                .await
+        }
+        AppDb::Postgres(pool) => repo::postgres::top_services(pool, period).await,
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -164,8 +175,13 @@ pub async fn get_no_shows_report(
     period: String,
 ) -> AppResult<NoShowsReport> {
     state.require_owner()?;
-    state
-        .db
-        .with_sqlite(move |conn| repo::no_shows(conn, period))
-        .await
+    match &state.db {
+        AppDb::Sqlite(_) => {
+            state
+                .db
+                .with_sqlite(move |conn| repo::no_shows(conn, period))
+                .await
+        }
+        AppDb::Postgres(pool) => repo::postgres::no_shows(pool, period).await,
+    }
 }
