@@ -1,8 +1,9 @@
 "use client";
 
 import { invoke } from "@tauri-apps/api/core";
+import { save } from "@tauri-apps/plugin-dialog";
 import { relaunch } from "@tauri-apps/plugin-process";
-import { Check, Cloud, Database, HardDrive } from "lucide-react";
+import { Check, Cloud, Database, Download, HardDrive } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 
@@ -46,17 +47,20 @@ const EMPTY_PG_CONFIG: PostgresConfig = {
 
 export function StorageSettings() {
   const [loading, setLoading] = useState(true);
+  const [currentMode, setCurrentMode] = useState<SelectedMode>("local");
   const [selected, setSelected] = useState<SelectedMode>("local");
   const [pgConfig, setPgConfig] = useState<PostgresConfig>(EMPTY_PG_CONFIG);
   const [password, setPassword] = useState("");
   const [testing, setTesting] = useState(false);
   const [switching, setSwitching] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const mode = await invoke<StorageMode>("storage_get_mode");
+      setCurrentMode(mode.mode);
       setSelected(mode.mode);
       if (mode.mode === "postgres") {
         setPgConfig({
@@ -101,6 +105,26 @@ export function StorageSettings() {
       toast.error(err instanceof Error ? err.message : "No se pudo conectar");
     } finally {
       setTesting(false);
+    }
+  };
+
+  const exportBackup = async () => {
+    const destination = await save({
+      defaultPath: `aura-studio-respaldo-${new Date().toISOString().slice(0, 10)}.json`,
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    });
+    if (!destination) return;
+
+    setExporting(true);
+    try {
+      await invoke("storage_export_local_data", { path: destination });
+      toast.success("Respaldo guardado");
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "No se pudo generar el respaldo"
+      );
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -279,6 +303,18 @@ export function StorageSettings() {
                 : "La app se conectará a la base de datos PostgreSQL indicada y se reiniciará. Los datos que tengas localmente no se copian automáticamente — esta base externa debe estar vacía o ya tener los datos que quieres usar."}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {currentMode === "local" && selected === "postgres" && (
+            <Button
+              type="button"
+              variant="outline"
+              className="w-fit"
+              disabled={exporting}
+              onClick={() => void exportBackup()}
+            >
+              <Download data-icon="inline-start" />
+              {exporting ? "Generando respaldo..." : "Descargar respaldo de mis datos (JSON)"}
+            </Button>
+          )}
           <AlertDialogFooter>
             <AlertDialogCancel disabled={switching}>Cancelar</AlertDialogCancel>
             <AlertDialogAction

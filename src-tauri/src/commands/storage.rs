@@ -4,7 +4,9 @@ use sqlx::postgres::PgPoolOptions;
 use tauri::{AppHandle, Manager, State};
 
 use crate::app_db;
+use crate::app_db::AppDb;
 use crate::error::{AppError, AppResult};
+use crate::export;
 use crate::state::AppState;
 use crate::storage_config::{self, PostgresConnectionConfig, StorageMode};
 
@@ -99,5 +101,26 @@ pub async fn storage_switch_mode(
             Ok(())
         }
         _ => Err(AppError::validation("Modo de almacenamiento inválido")),
+    }
+}
+
+/// Descarga un respaldo JSON de los datos locales (issue #9, Fase 4). Solo
+/// disponible en modo Local — el modo Postgres es responsabilidad del propio
+/// servidor del usuario. No incluye `sessions` ni `password_hash` (ver
+/// `crate::export`). `path` es elegido por el usuario en un diálogo nativo
+/// de "Guardar como" en el frontend, no una ruta arbitraria del backend.
+#[tauri::command]
+pub async fn storage_export_local_data(state: State<'_, AppState>, path: String) -> AppResult<()> {
+    state.require_owner()?;
+
+    match &state.db {
+        AppDb::Sqlite(_) => {
+            let json = state.db.with_sqlite(export::export_all).await?;
+            std::fs::write(&path, json)
+                .map_err(|e| AppError::Internal(format!("no se pudo escribir el archivo: {e}")))
+        }
+        AppDb::Postgres(_) => Err(AppError::validation(
+            "El respaldo a JSON solo está disponible en modo local",
+        )),
     }
 }

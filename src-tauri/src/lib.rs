@@ -3,6 +3,7 @@ pub mod auth;
 pub mod commands;
 pub mod db;
 pub mod error;
+pub mod export;
 pub mod models;
 pub mod repositories;
 pub mod state;
@@ -114,6 +115,7 @@ pub fn run() {
             commands::storage::storage_get_mode,
             commands::storage::storage_test_connection,
             commands::storage::storage_switch_mode,
+            commands::storage::storage_export_local_data,
         ])
         .run(tauri::generate_context!())
         .expect("error al ejecutar la aplicación Tauri");
