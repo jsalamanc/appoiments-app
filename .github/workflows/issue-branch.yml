@@ -1,0 +1,64 @@
+name: Crear rama desde issue
+
+# Al abrir un issue crea una rama `feature/<número>-<slug-del-título>`
+# (o `fix/...` si el issue trae la etiqueta `bug`) desde la rama por
+# defecto, y la vincula al issue en la sección "Development".
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  create-branch:
+    # Solo para issues abiertos por el dueño o colaboradores del repo; así
+    # nadie externo puede crear ramas en masa abriendo issues.
+    if: contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.issue.author_association)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Crear y vincular rama
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_NODE_ID: ${{ github.event.issue.node_id }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          IS_BUG: ${{ contains(github.event.issue.labels.*.name, 'bug') }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+
+          prefix="feature"
+          if [ "$IS_BUG" = "true" ]; then prefix="fix"; fi
+
+          # "Revisión del proyecto: bugs" -> "revision-del-proyecto-bugs"
+          slug=$(printf '%s' "$ISSUE_TITLE" \
+            | iconv -f utf-8 -t ascii//TRANSLIT \
+            | tr '[:upper:]' '[:lower:]' \
+            | sed -E 's/[^a-z0-9]+/-/g; s/^-+|-+$//g' \
+            | cut -c1-40 \
+            | sed -E 's/-+$//')
+          branch="${prefix}/${ISSUE_NUMBER}${slug:+-$slug}"
+
+          sha=$(gh api "repos/$REPO/git/ref/heads/$DEFAULT_BRANCH" --jq .object.sha)
+          repo_id=$(gh api "repos/$REPO" --jq .node_id)
+
+          gh api graphql \
+            -f query='mutation($issueId: ID!, $repoId: ID!, $oid: GitObjectID!, $name: String!) {
+              createLinkedBranch(input: {issueId: $issueId, repositoryId: $repoId, oid: $oid, name: $name}) {
+                linkedBranch { ref { name } }
+              }
+            }' \
+            -f issueId="$ISSUE_NODE_ID" \
+            -f repoId="$repo_id" \
+            -f oid="$sha" \
+            -f name="$branch"
+
+          gh issue comment "$ISSUE_NUMBER" --repo "$REPO" --body "Rama creada: \`$branch\`
+
+          \`\`\`bash
+          git fetch origin && git switch $branch
+          \`\`\`"
