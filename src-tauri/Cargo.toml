@@ -18,13 +18,15 @@ tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-rusqlite = { version = "0.31", features = ["bundled"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
 rusqlite_migration = "1"
 argon2 = "0.5"
 rand = "0.8"
 uuid = { version = "1", features = ["v4"] }
 thiserror = "1"
 time = { version = "0.3", features = ["formatting", "parsing", "serde"] }
+sqlx = { version = "0.8", default-features = false, features = ["postgres", "runtime-tokio-rustls", "macros", "migrate", "time"] }
+keyring = { version = "4", features = ["apple-native-keyring-store"] }
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]

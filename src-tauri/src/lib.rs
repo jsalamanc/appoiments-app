@@ -1,9 +1,11 @@
+pub mod app_db;
 pub mod auth;
 pub mod commands;
 pub mod db;
 pub mod error;
 pub mod models;
 pub mod state;
+pub mod storage_config;
 pub mod util;
 
 use tauri::Manager;
