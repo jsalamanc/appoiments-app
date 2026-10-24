@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
+use crate::app_db::AppDb;
 use crate::error::{AppError, AppResult};
 use crate::models::user::UserPublic;
 use crate::repositories::auth as repo;
@@ -20,10 +21,15 @@ pub async fn auth_login(
     password: String,
     remember_me: bool,
 ) -> AppResult<LoginResult> {
-    let (user, session_token) = state
-        .db
-        .with_sqlite(move |conn| repo::login(conn, username, password, remember_me))
-        .await?;
+    let (user, session_token) = match &state.db {
+        AppDb::Sqlite(_) => {
+            state
+                .db
+                .with_sqlite(move |conn| repo::login(conn, username, password, remember_me))
+                .await?
+        }
+        AppDb::Postgres(pool) => repo::postgres::login(pool, username, password, remember_me).await?,
+    };
 
     *state.current_user.lock().unwrap() = Some(user.clone());
 
@@ -39,10 +45,15 @@ pub async fn auth_logout(
     session_token: Option<String>,
 ) -> AppResult<()> {
     if let Some(token) = session_token {
-        state
-            .db
-            .with_sqlite(move |conn| repo::delete_session(conn, token))
-            .await?;
+        match &state.db {
+            AppDb::Sqlite(_) => {
+                state
+                    .db
+                    .with_sqlite(move |conn| repo::delete_session(conn, token))
+                    .await?
+            }
+            AppDb::Postgres(pool) => repo::postgres::delete_session(pool, token).await?,
+        }
     }
     *state.current_user.lock().unwrap() = None;
     Ok(())
@@ -53,10 +64,15 @@ pub async fn auth_resume_session(
     state: State<'_, AppState>,
     session_token: String,
 ) -> AppResult<Option<UserPublic>> {
-    let user = state
-        .db
-        .with_sqlite(move |conn| repo::resume_session(conn, session_token))
-        .await?;
+    let user = match &state.db {
+        AppDb::Sqlite(_) => {
+            state
+                .db
+                .with_sqlite(move |conn| repo::resume_session(conn, session_token))
+                .await?
+        }
+        AppDb::Postgres(pool) => repo::postgres::resume_session(pool, session_token).await?,
+    };
 
     if let Some(ref u) = user {
         *state.current_user.lock().unwrap() = Some(u.clone());
@@ -95,18 +111,32 @@ pub async fn auth_change_password(
     }
     let verify_old_password = !is_owner || current.id == input.user_id;
 
-    state
-        .db
-        .with_sqlite(move |conn| {
-            repo::change_password(
-                conn,
+    match &state.db {
+        AppDb::Sqlite(_) => {
+            state
+                .db
+                .with_sqlite(move |conn| {
+                    repo::change_password(
+                        conn,
+                        input.user_id,
+                        input.old_password,
+                        input.new_password,
+                        verify_old_password,
+                    )
+                })
+                .await
+        }
+        AppDb::Postgres(pool) => {
+            repo::postgres::change_password(
+                pool,
                 input.user_id,
                 input.old_password,
                 input.new_password,
                 verify_old_password,
             )
-        })
-        .await
+            .await
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -147,10 +177,20 @@ pub async fn create_staff_user(
         "staff"
     };
 
-    state
-        .db
-        .with_sqlite(move |conn| repo::create_staff(conn, input.name, input.username, input.password, role))
-        .await
+    match &state.db {
+        AppDb::Sqlite(_) => {
+            state
+                .db
+                .with_sqlite(move |conn| {
+                    repo::create_staff(conn, input.name, input.username, input.password, role)
+                })
+                .await
+        }
+        AppDb::Postgres(pool) => {
+            repo::postgres::create_staff(pool, input.name, input.username, input.password, role)
+                .await
+        }
+    }
 }
 
 #[tauri::command]
@@ -165,7 +205,10 @@ pub async fn list_users(state: State<'_, AppState>) -> AppResult<Vec<UserPublic>
         return Err(AppError::Unauthorized);
     }
 
-    state.db.with_sqlite(repo::list).await
+    match &state.db {
+        AppDb::Sqlite(_) => state.db.with_sqlite(repo::list).await,
+        AppDb::Postgres(pool) => repo::postgres::list(pool).await,
+    }
 }
 
 #[tauri::command]
@@ -189,8 +232,13 @@ pub async fn set_user_active(
         ));
     }
 
-    state
-        .db
-        .with_sqlite(move |conn| repo::set_active(conn, user_id, active))
-        .await
+    match &state.db {
+        AppDb::Sqlite(_) => {
+            state
+                .db
+                .with_sqlite(move |conn| repo::set_active(conn, user_id, active))
+                .await
+        }
+        AppDb::Postgres(pool) => repo::postgres::set_active(pool, user_id, active).await,
+    }
 }

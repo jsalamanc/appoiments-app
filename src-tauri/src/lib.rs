@@ -90,6 +90,7 @@ pub fn run() {
             commands::sales::get_cash_day_summary,
             commands::sales::get_revenue_metrics,
             commands::sales::link_sale_to_appointment,
+            commands::storage::storage_test_connection,
         ])
         .run(tauri::generate_context!())
         .expect("error al ejecutar la aplicación Tauri");

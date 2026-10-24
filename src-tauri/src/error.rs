@@ -64,4 +64,43 @@ impl From<rusqlite::Error> for AppError {
     }
 }
 
+/// Mapeo de errores de PostgreSQL (vía `sqlx`) a `AppError`, espejo de la
+/// conversión de `rusqlite::Error` de arriba: mismos mensajes para el
+/// usuario, pero leyendo el código SQLSTATE (`23505` = unicidad, `23503` =
+/// llave foránea) y el nombre de la restricción en vez de parsear el texto
+/// del mensaje de SQLite.
+impl From<sqlx::Error> for AppError {
+    fn from(err: sqlx::Error) -> Self {
+        if matches!(err, sqlx::Error::RowNotFound) {
+            return AppError::NotFound;
+        }
+        if let sqlx::Error::Database(ref db_err) = err {
+            match db_err.code().as_deref() {
+                Some("23505") => {
+                    let msg = db_err.message();
+                    if msg.contains("document") {
+                        return AppError::conflict("Ya existe un cliente con ese documento");
+                    }
+                    if msg.contains("email") {
+                        return AppError::conflict("Ya existe un cliente con ese correo");
+                    }
+                    if msg.contains("username") {
+                        return AppError::conflict(
+                            "Ya existe un usuario con ese nombre de usuario",
+                        );
+                    }
+                    return AppError::conflict("Ya existe un registro con ese valor único");
+                }
+                Some("23503") => {
+                    return AppError::conflict(
+                        "No se puede completar la operación: hay registros que dependen de este elemento",
+                    );
+                }
+                _ => {}
+            }
+        }
+        AppError::Internal(err.to_string())
+    }
+}
+
 pub type AppResult<T> = Result<T, AppError>;

@@ -9,3 +9,4 @@ pub mod products;
 pub mod reports;
 pub mod sales;
 pub mod services;
+pub mod storage;

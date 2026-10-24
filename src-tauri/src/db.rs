@@ -30,6 +30,16 @@ pub fn now_iso() -> String {
         .unwrap_or_default()
 }
 
+/// Formatea un `TIMESTAMPTZ` leído de PostgreSQL con el mismo formato RFC3339
+/// que usa `now_iso()` para SQLite, para que los modelos (`created_at`,
+/// `updated_at`, etc., tipados como `String`) se vean idénticos sin importar
+/// el backend de almacenamiento activo.
+pub fn format_pg_timestamp(value: time::OffsetDateTime) -> String {
+    value
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap_or_default()
+}
+
 pub fn new_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }

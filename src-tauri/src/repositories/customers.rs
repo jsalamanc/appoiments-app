@@ -289,3 +289,349 @@ pub fn find_by_id(conn: &mut Connection, id: String) -> AppResult<Option<Custome
         Err(e) => Err(e.into()),
     }
 }
+
+/// Implementación PostgreSQL (issue #9, Fase 2) — mismas reglas que arriba,
+/// adaptadas al driver async `sqlx`. Las columnas de texto/booleano decodifican
+/// igual que en SQLite; las de timestamp (`TIMESTAMPTZ`) se decodifican como
+/// `time::OffsetDateTime` y se formatean a RFC3339 con
+/// `db::format_pg_timestamp` para que los modelos sigan viendo un `String`
+/// idéntico sin importar el backend activo. Se usa `RETURNING` en los
+/// `INSERT`/`UPDATE` para evitar una segunda consulta de relectura.
+pub mod postgres {
+    use sqlx::postgres::PgRow;
+    use sqlx::{PgPool, Row};
+
+    use crate::commands::customers::{
+        AppointmentWithDetails, CustomerDetail, CustomerInput, CustomerRef, EmployeeRef,
+        ListCustomersResult, SaleItemRow, SaleWithDetails, ServiceRef,
+    };
+    use crate::db::{format_pg_timestamp, new_id};
+    use crate::error::{AppError, AppResult};
+    use crate::models::customer::Customer;
+    use crate::util::pagination::{get_range, get_total_pages, CATALOG_PAGE_SIZE};
+
+    fn ts(row: &PgRow, col: &str) -> AppResult<String> {
+        let value: time::OffsetDateTime = row.try_get(col)?;
+        Ok(format_pg_timestamp(value))
+    }
+
+    fn map_customer(row: &PgRow) -> AppResult<Customer> {
+        Ok(Customer {
+            id: row.try_get("id")?,
+            name: row.try_get("name")?,
+            phone: row.try_get("phone")?,
+            email: row.try_get("email")?,
+            document: row.try_get("document")?,
+            created_at: ts(row, "created_at")?,
+            updated_at: ts(row, "updated_at")?,
+        })
+    }
+
+    fn normalize_email(email: &str) -> String {
+        email.trim().to_lowercase()
+    }
+
+    const CUSTOMER_COLUMNS: &str = "id, name, phone, email, document, created_at, updated_at";
+
+    pub async fn list(
+        pool: &PgPool,
+        page: Option<i64>,
+        page_size: Option<i64>,
+        q: Option<String>,
+    ) -> AppResult<ListCustomersResult> {
+        let page = page.unwrap_or(1).max(1);
+        let page_size = page_size.unwrap_or(CATALOG_PAGE_SIZE);
+        let q = q.unwrap_or_default().trim().to_string();
+
+        let (total, filtered): (i64, bool) = if q.is_empty() {
+            let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM customers")
+                .fetch_one(pool)
+                .await?;
+            (total, false)
+        } else {
+            let pattern = format!("%{}%", q.to_lowercase());
+            let total: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM customers WHERE
+                    lower(name) LIKE $1 OR lower(email) LIKE $1 OR
+                    lower(document) LIKE $1 OR lower(phone) LIKE $1",
+            )
+            .bind(pattern)
+            .fetch_one(pool)
+            .await?;
+            (total, true)
+        };
+
+        let total_pages = get_total_pages(total, page_size);
+        let safe_page = page.min(total_pages);
+        let (limit, offset) = get_range(safe_page, page_size);
+
+        let rows = if filtered {
+            let pattern = format!("%{}%", q.to_lowercase());
+            sqlx::query(&format!(
+                "SELECT {CUSTOMER_COLUMNS} FROM customers WHERE
+                    lower(name) LIKE $1 OR lower(email) LIKE $1 OR
+                    lower(document) LIKE $1 OR lower(phone) LIKE $1
+                 ORDER BY name ASC LIMIT $2 OFFSET $3"
+            ))
+            .bind(pattern)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(pool)
+            .await?
+        } else {
+            sqlx::query(&format!(
+                "SELECT {CUSTOMER_COLUMNS} FROM customers ORDER BY name ASC LIMIT $1 OFFSET $2"
+            ))
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(pool)
+            .await?
+        };
+
+        let items = rows.iter().map(map_customer).collect::<AppResult<Vec<_>>>()?;
+
+        Ok(ListCustomersResult {
+            items,
+            total,
+            page: safe_page,
+            total_pages,
+            page_size,
+            q,
+        })
+    }
+
+    pub async fn get_detail(pool: &PgPool, id: String) -> AppResult<Option<CustomerDetail>> {
+        let customer_row = sqlx::query(&format!(
+            "SELECT {CUSTOMER_COLUMNS} FROM customers WHERE id = $1"
+        ))
+        .bind(&id)
+        .fetch_optional(pool)
+        .await?;
+
+        let Some(customer_row) = customer_row else {
+            return Ok(None);
+        };
+        let customer = map_customer(&customer_row)?;
+
+        let customer_ref = CustomerRef {
+            id: customer.id.clone(),
+            name: customer.name.clone(),
+            email: customer.email.clone(),
+            phone: customer.phone.clone(),
+            document: customer.document.clone(),
+        };
+
+        let sale_rows = sqlx::query(
+            "SELECT id, appointment_id, payment_method, total, sold_at, created_at
+             FROM sales WHERE customer_id = $1 ORDER BY sold_at DESC LIMIT 20",
+        )
+        .bind(&id)
+        .fetch_all(pool)
+        .await?;
+
+        let mut sales = Vec::new();
+        for row in &sale_rows {
+            let sale_id: String = row.try_get("id")?;
+            let appointment_id: Option<String> = row.try_get("appointment_id")?;
+            let payment_method: String = row.try_get("payment_method")?;
+            let total: f64 = row.try_get("total")?;
+            let sold_at = ts(row, "sold_at")?;
+            let created_at = ts(row, "created_at")?;
+
+            let item_rows = sqlx::query(
+                "SELECT id, sale_id, item_type, product_id, service_id, package_id,
+                        name_snapshot, unit_price, quantity, line_total, created_at
+                 FROM sale_items WHERE sale_id = $1 ORDER BY created_at ASC",
+            )
+            .bind(&sale_id)
+            .fetch_all(pool)
+            .await?;
+
+            let items = item_rows
+                .iter()
+                .map(|r| -> AppResult<SaleItemRow> {
+                    Ok(SaleItemRow {
+                        id: r.try_get("id")?,
+                        sale_id: r.try_get("sale_id")?,
+                        item_type: r.try_get("item_type")?,
+                        product_id: r.try_get("product_id")?,
+                        service_id: r.try_get("service_id")?,
+                        package_id: r.try_get("package_id")?,
+                        name_snapshot: r.try_get("name_snapshot")?,
+                        unit_price: r.try_get("unit_price")?,
+                        quantity: r.try_get::<i32, _>("quantity")? as i64,
+                        line_total: r.try_get("line_total")?,
+                        created_at: ts(r, "created_at")?,
+                    })
+                })
+                .collect::<AppResult<Vec<_>>>()?;
+
+            sales.push(SaleWithDetails {
+                id: sale_id,
+                customer_id: id.clone(),
+                appointment_id,
+                payment_method,
+                total,
+                sold_at,
+                created_at,
+                customers: CustomerRef {
+                    id: customer_ref.id.clone(),
+                    name: customer_ref.name.clone(),
+                    email: customer_ref.email.clone(),
+                    phone: customer_ref.phone.clone(),
+                    document: customer_ref.document.clone(),
+                },
+                sale_items: items,
+            });
+        }
+
+        let appt_rows = sqlx::query(
+            "SELECT a.id, a.employee_id, a.customer_id, a.service_id, a.service_name_snapshot,
+                    a.starts_at, a.ends_at, a.status, a.notes, a.sale_id, a.created_at, a.updated_at,
+                    e.name as emp_name, e.color as emp_color, e.active as emp_active,
+                    s.price as svc_price, s.duration_minutes as svc_duration, s.status as svc_status
+             FROM appointments a
+             JOIN employees e ON e.id = a.employee_id
+             LEFT JOIN services s ON s.id = a.service_id
+             WHERE a.customer_id = $1
+             ORDER BY a.starts_at DESC LIMIT 20",
+        )
+        .bind(&id)
+        .fetch_all(pool)
+        .await?;
+
+        let mut appointments = Vec::new();
+        for row in &appt_rows {
+            let service_id: Option<String> = row.try_get("service_id")?;
+            let services = if service_id.is_some() {
+                Some(ServiceRef {
+                    id: service_id.clone().unwrap(),
+                    name: row.try_get("service_name_snapshot")?,
+                    price: row.try_get("svc_price")?,
+                    duration_minutes: row.try_get::<i32, _>("svc_duration")? as i64,
+                    status: row.try_get("svc_status")?,
+                })
+            } else {
+                None
+            };
+
+            appointments.push(AppointmentWithDetails {
+                id: row.try_get("id")?,
+                employee_id: row.try_get("employee_id")?,
+                customer_id: row.try_get("customer_id")?,
+                service_id,
+                service_name_snapshot: row.try_get("service_name_snapshot")?,
+                starts_at: ts(row, "starts_at")?,
+                ends_at: ts(row, "ends_at")?,
+                status: row.try_get("status")?,
+                notes: row.try_get("notes")?,
+                sale_id: row.try_get("sale_id")?,
+                created_at: ts(row, "created_at")?,
+                updated_at: ts(row, "updated_at")?,
+                employees: EmployeeRef {
+                    id: row.try_get("employee_id")?,
+                    name: row.try_get("emp_name")?,
+                    color: row.try_get("emp_color")?,
+                    active: row.try_get("emp_active")?,
+                },
+                customers: CustomerRef {
+                    id: customer_ref.id.clone(),
+                    name: customer_ref.name.clone(),
+                    email: customer_ref.email.clone(),
+                    phone: customer_ref.phone.clone(),
+                    document: customer_ref.document.clone(),
+                },
+                services,
+            });
+        }
+
+        Ok(Some(CustomerDetail {
+            customer,
+            sales,
+            appointments,
+        }))
+    }
+
+    pub async fn create(pool: &PgPool, input: CustomerInput) -> AppResult<Customer> {
+        let email = normalize_email(&input.email);
+        let document = input.document.trim().to_string();
+
+        let row = sqlx::query(&format!(
+            "INSERT INTO customers (id, name, phone, email, document)
+             VALUES ($1, $2, $3, $4, $5)
+             RETURNING {CUSTOMER_COLUMNS}"
+        ))
+        .bind(new_id())
+        .bind(input.name.trim())
+        .bind(input.phone.trim())
+        .bind(&email)
+        .bind(&document)
+        .fetch_one(pool)
+        .await?;
+
+        map_customer(&row)
+    }
+
+    pub async fn update(pool: &PgPool, id: String, input: CustomerInput) -> AppResult<Customer> {
+        let email = normalize_email(&input.email);
+        let document = input.document.trim().to_string();
+
+        let row = sqlx::query(&format!(
+            "UPDATE customers SET name = $1, phone = $2, email = $3, document = $4, updated_at = now()
+             WHERE id = $5
+             RETURNING {CUSTOMER_COLUMNS}"
+        ))
+        .bind(input.name.trim())
+        .bind(input.phone.trim())
+        .bind(&email)
+        .bind(&document)
+        .bind(&id)
+        .fetch_optional(pool)
+        .await?
+        .ok_or(AppError::NotFound)?;
+
+        map_customer(&row)
+    }
+
+    pub async fn find_by_document(
+        pool: &PgPool,
+        document: String,
+    ) -> AppResult<Option<Customer>> {
+        let normalized = document.trim();
+        if normalized.is_empty() {
+            return Ok(None);
+        }
+        let row = sqlx::query(&format!(
+            "SELECT {CUSTOMER_COLUMNS} FROM customers WHERE lower(document) = $1"
+        ))
+        .bind(normalized.to_lowercase())
+        .fetch_optional(pool)
+        .await?;
+
+        row.as_ref().map(map_customer).transpose()
+    }
+
+    pub async fn find_by_email(pool: &PgPool, email: String) -> AppResult<Option<Customer>> {
+        let normalized = normalize_email(&email);
+        if normalized.is_empty() {
+            return Ok(None);
+        }
+        let row = sqlx::query(&format!(
+            "SELECT {CUSTOMER_COLUMNS} FROM customers WHERE lower(email) = $1"
+        ))
+        .bind(normalized)
+        .fetch_optional(pool)
+        .await?;
+
+        row.as_ref().map(map_customer).transpose()
+    }
+
+    pub async fn find_by_id(pool: &PgPool, id: String) -> AppResult<Option<Customer>> {
+        let row = sqlx::query(&format!("SELECT {CUSTOMER_COLUMNS} FROM customers WHERE id = $1"))
+            .bind(id)
+            .fetch_optional(pool)
+            .await?;
+
+        row.as_ref().map(map_customer).transpose()
+    }
+}
