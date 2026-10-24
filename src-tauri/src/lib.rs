@@ -20,12 +20,33 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
-            let data_dir = app
+            let config_dir = app
                 .path()
-                .app_data_dir()
-                .expect("no se pudo resolver el directorio de datos de la app");
-            let conn = db::open(&data_dir).expect("no se pudo abrir la base de datos local");
-            app.manage(AppState::new(conn));
+                .app_config_dir()
+                .expect("no se pudo resolver el directorio de configuración de la app");
+            let mode = storage_config::load(&config_dir);
+
+            let app_state = match mode {
+                storage_config::StorageMode::Local => {
+                    let data_dir = app
+                        .path()
+                        .app_data_dir()
+                        .expect("no se pudo resolver el directorio de datos de la app");
+                    let conn =
+                        db::open(&data_dir).expect("no se pudo abrir la base de datos local");
+                    AppState::new(conn)
+                }
+                storage_config::StorageMode::Postgres(ref pg_config) => {
+                    let password = storage_config::get_password(pg_config).expect(
+                        "no se pudo leer la contraseña de PostgreSQL del almacén de credenciales",
+                    );
+                    let pool =
+                        tauri::async_runtime::block_on(app_db::open_postgres(pg_config, &password))
+                            .expect("no se pudo conectar a PostgreSQL ni correr sus migraciones");
+                    AppState::new_postgres(pool)
+                }
+            };
+            app.manage(app_state);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -90,7 +111,9 @@ pub fn run() {
             commands::sales::get_cash_day_summary,
             commands::sales::get_revenue_metrics,
             commands::sales::link_sale_to_appointment,
+            commands::storage::storage_get_mode,
             commands::storage::storage_test_connection,
+            commands::storage::storage_switch_mode,
         ])
         .run(tauri::generate_context!())
         .expect("error al ejecutar la aplicación Tauri");

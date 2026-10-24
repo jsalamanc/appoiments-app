@@ -1,13 +1,30 @@
 use std::time::Duration;
 
 use sqlx::postgres::PgPoolOptions;
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
 
+use crate::app_db;
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
-use crate::storage_config::PostgresConnectionConfig;
+use crate::storage_config::{self, PostgresConnectionConfig, StorageMode};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+
+fn config_dir(app: &AppHandle) -> AppResult<std::path::PathBuf> {
+    app.path()
+        .app_config_dir()
+        .map_err(|e| AppError::Internal(format!("no se pudo resolver el directorio de configuración: {e}")))
+}
+
+/// Modo de almacenamiento activo, para que Ajustes sepa qué mostrar
+/// seleccionado al cargar la página. No incluye la contraseña (vive aparte,
+/// en el keychain del SO) — `StorageMode` ya está diseñado para serializarse
+/// de forma segura.
+#[tauri::command]
+pub async fn storage_get_mode(app: AppHandle, state: State<'_, AppState>) -> AppResult<StorageMode> {
+    state.require_owner()?;
+    Ok(storage_config::load(&config_dir(&app)?))
+}
 
 /// Prueba una conexión a PostgreSQL con los datos ingresados en Ajustes, sin
 /// persistir nada (ni `storage.json` ni la contraseña en el keychain) y sin
@@ -40,4 +57,47 @@ pub async fn storage_test_connection(
 
     pool.close().await;
     result.map(|_| ())
+}
+
+/// Cambia el modo de almacenamiento activo. Para `postgres`, se conecta y se
+/// corren las migraciones contra el destino ANTES de persistir nada — si algo
+/// falla, `storage.json` queda exactamente como estaba (no hace falta un
+/// "revert" explícito, el orden de las operaciones ya lo garantiza). El
+/// frontend es responsable de reiniciar la app (`relaunch()` del plugin
+/// `process`) después de un cambio exitoso: `AppState` ya quedó construido
+/// contra el backend anterior y no se puede reemplazar en caliente.
+#[tauri::command]
+pub async fn storage_switch_mode(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    mode: String,
+    config: Option<PostgresConnectionConfig>,
+    password: Option<String>,
+) -> AppResult<()> {
+    state.require_owner()?;
+    let dir = config_dir(&app)?;
+
+    match mode.as_str() {
+        "local" => {
+            storage_config::save(&dir, &StorageMode::Local)
+                .map_err(|e| AppError::Internal(format!("no se pudo guardar la configuración: {e}")))?;
+            Ok(())
+        }
+        "postgres" => {
+            let config = config.ok_or_else(|| AppError::validation("Faltan los datos de conexión"))?;
+            let password = password.ok_or_else(|| AppError::validation("Falta la contraseña"))?;
+
+            app_db::open_postgres(&config, &password)
+                .await
+                .map_err(|e| AppError::validation(format!("No se pudo preparar la base de datos: {e}")))?;
+
+            storage_config::set_password(&config, &password)
+                .map_err(|e| AppError::Internal(format!("no se pudo guardar la contraseña: {e}")))?;
+            storage_config::save(&dir, &StorageMode::Postgres(config))
+                .map_err(|e| AppError::Internal(format!("no se pudo guardar la configuración: {e}")))?;
+
+            Ok(())
+        }
+        _ => Err(AppError::validation("Modo de almacenamiento inválido")),
+    }
 }

@@ -19,6 +19,13 @@ impl AppState {
         }
     }
 
+    pub fn new_postgres(pool: sqlx::PgPool) -> Self {
+        Self {
+            db: AppDb::Postgres(pool),
+            current_user: Mutex::new(None),
+        }
+    }
+
     /// Exige que haya una sesión activa con rol `owner`. Usado por los
     /// comandos de Ajustes/Reportes, que en el frontend ya están ocultos
     /// para staff (OwnerGate + sidebar), pero que también deben rechazarse
