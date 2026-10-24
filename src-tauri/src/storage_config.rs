@@ -21,19 +21,14 @@ const CONFIG_FILE_NAME: &str = "storage.json";
 const KEYRING_SERVICE: &str = "com.aurastudio.storage";
 
 /// Modo de almacenamiento de datos activo para esta instalación.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum StorageMode {
     /// SQLite embebida (comportamiento actual, sin cambios).
+    #[default]
     Local,
     /// Servidor PostgreSQL externo, auto-hospedado por el usuario.
     Postgres(PostgresConnectionConfig),
-}
-
-impl Default for StorageMode {
-    fn default() -> Self {
-        StorageMode::Local
-    }
 }
 
 /// Datos de conexión no sensibles a un PostgreSQL externo. La contraseña se

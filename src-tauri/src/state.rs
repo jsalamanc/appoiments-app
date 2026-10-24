@@ -1,19 +1,20 @@
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use rusqlite::Connection;
 
+use crate::app_db::AppDb;
 use crate::error::{AppError, AppResult};
 use crate::models::user::UserPublic;
 
 pub struct AppState {
-    pub db: Mutex<Connection>,
+    pub db: AppDb,
     pub current_user: Mutex<Option<UserPublic>>,
 }
 
 impl AppState {
     pub fn new(db: Connection) -> Self {
         Self {
-            db: Mutex::new(db),
+            db: AppDb::Sqlite(Arc::new(Mutex::new(db))),
             current_user: Mutex::new(None),
         }
     }
