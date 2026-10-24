@@ -313,9 +313,15 @@ pub mod postgres {
             total_revenue / sales_count as f64
         };
 
+        // A diferencia de SQLite, Postgres exige que toda columna en el
+        // SELECT esté en el GROUP BY o dentro de una función de agregación;
+        // como el GROUP BY agrupa por COALESCE(service_id, name_snapshot) y
+        // no por service_id directamente, hay que envolverlo en MIN(...)
+        // igual que ya se hacía con name_snapshot (dentro de cada grupo,
+        // service_id es siempre el mismo valor o siempre NULL).
         let rows = sqlx::query(
             "SELECT
-                si.service_id AS service_id,
+                MIN(si.service_id) AS service_id,
                 MIN(si.name_snapshot) AS name,
                 SUM(si.quantity) AS quantity,
                 SUM(si.line_total) AS revenue
