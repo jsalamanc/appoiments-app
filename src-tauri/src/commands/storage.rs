@@ -42,13 +42,15 @@ pub async fn storage_test_connection(
     state: State<'_, AppState>,
     config: PostgresConnectionConfig,
     password: String,
+    ca_cert_path: Option<String>,
 ) -> AppResult<()> {
     state.require_owner()?;
 
+    let ca_cert_path = ca_cert_path.map(std::path::PathBuf::from);
     let pool = PgPoolOptions::new()
         .max_connections(1)
         .acquire_timeout(CONNECT_TIMEOUT)
-        .connect_with(config.connect_options(&password))
+        .connect_with(config.connect_options(&password, ca_cert_path.as_deref()))
         .await
         .map_err(|e| AppError::validation(format!("No se pudo conectar: {e}")))?;
 
@@ -75,6 +77,7 @@ pub async fn storage_switch_mode(
     mode: String,
     config: Option<PostgresConnectionConfig>,
     password: Option<String>,
+    ca_cert_path: Option<String>,
 ) -> AppResult<()> {
     state.require_owner()?;
     let dir = config_dir(&app)?;
@@ -83,13 +86,35 @@ pub async fn storage_switch_mode(
         "local" => {
             storage_config::save(&dir, &StorageMode::Local)
                 .map_err(|e| AppError::Internal(format!("no se pudo guardar la configuración: {e}")))?;
+            // Sin certificado CA en modo local: evita que una reconfiguración
+            // futura a Postgres herede en silencio un certificado viejo.
+            storage_config::delete_ca_cert(&dir)
+                .map_err(|e| AppError::Internal(format!("no se pudo limpiar el certificado CA: {e}")))?;
             Ok(())
         }
         "postgres" => {
             let config = config.ok_or_else(|| AppError::validation("Faltan los datos de conexión"))?;
             let password = password.ok_or_else(|| AppError::validation("Falta la contraseña"))?;
 
-            app_db::open_postgres(&config, &password)
+            // El certificado se copia a la carpeta de configuración ANTES de
+            // probar la conexión, para validar contra la copia que de verdad
+            // va a usar la app en cada arranque (no el archivo original, que
+            // podría moverse o borrarse después).
+            let saved_ca_cert = match &ca_cert_path {
+                Some(source) => Some(
+                    storage_config::save_ca_cert(&dir, std::path::Path::new(source)).map_err(|e| {
+                        AppError::validation(format!("No se pudo leer el certificado CA: {e}"))
+                    })?,
+                ),
+                None => {
+                    storage_config::delete_ca_cert(&dir).map_err(|e| {
+                        AppError::Internal(format!("no se pudo limpiar el certificado CA: {e}"))
+                    })?;
+                    None
+                }
+            };
+
+            app_db::open_postgres(&config, &password, saved_ca_cert.as_deref())
                 .await
                 .map_err(|e| AppError::validation(format!("No se pudo preparar la base de datos: {e}")))?;
 

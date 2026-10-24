@@ -1,9 +1,9 @@
 "use client";
 
 import { invoke } from "@tauri-apps/api/core";
-import { save } from "@tauri-apps/plugin-dialog";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import { relaunch } from "@tauri-apps/plugin-process";
-import { Check, Cloud, Database, Download, HardDrive } from "lucide-react";
+import { Check, Cloud, Database, Download, FileLock2, HardDrive, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 
@@ -51,6 +51,7 @@ export function StorageSettings() {
   const [selected, setSelected] = useState<SelectedMode>("local");
   const [pgConfig, setPgConfig] = useState<PostgresConfig>(EMPTY_PG_CONFIG);
   const [password, setPassword] = useState("");
+  const [caCertPath, setCaCertPath] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
   const [switching, setSwitching] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -92,6 +93,19 @@ export function StorageSettings() {
     pgConfig.username.trim() !== "" &&
     password !== "";
 
+  const needsCaCert =
+    pgConfig.sslmode === "verify-ca" || pgConfig.sslmode === "verify-full";
+
+  const pickCaCert = async () => {
+    const selected = await open({
+      multiple: false,
+      filters: [{ name: "Certificado", extensions: ["pem", "crt", "cer"] }],
+    });
+    if (typeof selected === "string") {
+      setCaCertPath(selected);
+    }
+  };
+
   const testConnection = async () => {
     if (!pgFieldsComplete) {
       toast.error("Completa host, base de datos, usuario y contraseña");
@@ -99,7 +113,11 @@ export function StorageSettings() {
     }
     setTesting(true);
     try {
-      await invoke("storage_test_connection", { config: pgConfig, password });
+      await invoke("storage_test_connection", {
+        config: pgConfig,
+        password,
+        caCertPath: needsCaCert ? caCertPath : null,
+      });
       toast.success("Conexión exitosa");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "No se pudo conectar");
@@ -138,6 +156,7 @@ export function StorageSettings() {
           mode: "postgres",
           config: pgConfig,
           password,
+          caCertPath: needsCaCert ? caCertPath : null,
         });
       }
       toast.success("Modo de almacenamiento actualizado. Reiniciando...");
@@ -258,9 +277,13 @@ export function StorageSettings() {
                 <select
                   id="pg-sslmode"
                   value={pgConfig.sslmode}
-                  onChange={(e) =>
-                    setPgConfig((c) => ({ ...c, sslmode: e.target.value }))
-                  }
+                  onChange={(e) => {
+                    const sslmode = e.target.value;
+                    setPgConfig((c) => ({ ...c, sslmode }));
+                    if (sslmode !== "verify-ca" && sslmode !== "verify-full") {
+                      setCaCertPath(null);
+                    }
+                  }}
                   className="flex h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
                 >
                   <option value="disable">disable</option>
@@ -271,6 +294,43 @@ export function StorageSettings() {
                 </select>
               </div>
             </div>
+
+            {needsCaCert && (
+              <div className="space-y-2">
+                <Label>Certificado CA</Label>
+                <p className="text-xs text-muted-foreground">
+                  {pgConfig.sslmode === "verify-ca"
+                    ? "verify-ca"
+                    : "verify-full"}{" "}
+                  necesita el certificado de la autoridad (CA) que firmó el
+                  certificado de tu servidor para poder validarlo — normalmente
+                  hace falta si usas un certificado autofirmado o de una CA
+                  privada.
+                </p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button type="button" variant="secondary" onClick={() => void pickCaCert()}>
+                    <FileLock2 data-icon="inline-start" />
+                    {caCertPath ? "Cambiar certificado" : "Elegir certificado (.pem/.crt)"}
+                  </Button>
+                  {caCertPath && (
+                    <>
+                      <span className="truncate text-sm text-muted-foreground">
+                        {caCertPath.split(/[\\/]/).pop()}
+                      </span>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setCaCertPath(null)}
+                      >
+                        <X data-icon="inline-start" />
+                        Quitar
+                      </Button>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
 
             <Button
               type="button"

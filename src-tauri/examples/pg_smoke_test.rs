@@ -12,6 +12,23 @@
 //! postgresql-common postgresql-client-common libicu78 libpq5`),
 //! extrayéndolos con `dpkg-deb -x` a un directorio propio, y corriendo
 //! `initdb`/`pg_ctl` desde ahí como usuario normal.
+//!
+//! Si además existe `PG_SMOKE_TEST_CA_CERT` apuntando a un certificado CA, y
+//! el servidor tiene SSL habilitado con un certificado firmado por esa CA,
+//! también valida `sslmode=verify-full` con/sin certificado (soporte
+//! agregado a pedido de un usuario real que notó que la UI no tenía forma de
+//! subir un certificado CA). Para armar ese par CA+servidor con openssl:
+//!   openssl genrsa -out ca.key 2048
+//!   openssl req -new -x509 -days 3650 -key ca.key -out ca.crt \
+//!     -subj "/CN=Test CA" -addext "basicConstraints=critical,CA:TRUE"
+//!   openssl genrsa -out server.key 2048
+//!   openssl req -new -key server.key -out server.csr -subj "/CN=127.0.0.1"
+//!   openssl x509 -req -days 3650 -in server.csr -CA ca.crt -CAkey ca.key \
+//!     -CAcreateserial -out server.crt -extfile <(printf \
+//!     "basicConstraints=critical,CA:FALSE\nextendedKeyUsage=serverAuth\nsubjectAltName=IP:127.0.0.1")
+//! (el cert del servidor NO puede ser el mismo archivo que la CA: rustls
+//! rechaza con `CaUsedAsEndEntity` un certificado marcado CA:TRUE que
+//! también se presenta como certificado de servidor).
 
 use aura_studio_lib::app_db;
 use aura_studio_lib::commands::appointments::AppointmentInput;
@@ -30,6 +47,49 @@ use aura_studio_lib::storage_config::PostgresConnectionConfig;
 
 fn main() {
     tauri::async_runtime::block_on(run()).expect("smoke test falló");
+
+    match std::env::var("PG_SMOKE_TEST_CA_CERT") {
+        Ok(path) => {
+            tauri::async_runtime::block_on(run_ssl_check(std::path::Path::new(&path)))
+                .expect("prueba de SSL/CA falló");
+        }
+        Err(_) => println!(
+            "… PG_SMOKE_TEST_CA_CERT no está definida: se omite la prueba de verify-full/CA \
+             (ver el comentario del encabezado de este archivo para armar un servidor con SSL)"
+        ),
+    }
+}
+
+/// Verifica el soporte de certificado CA (`verify-full`) agregado a pedido de
+/// un usuario real que notó que la UI no tenía forma de subirlo: debe fallar
+/// sin el certificado y conectar exitosamente con el correcto.
+async fn run_ssl_check(ca_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    let config = PostgresConnectionConfig {
+        host: "127.0.0.1".into(),
+        port: 55432,
+        database: "aura_studio_test".into(),
+        username: "aura_test".into(),
+        sslmode: "verify-full".into(),
+    };
+
+    let without_cert = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect_with(config.connect_options("aura_test_pw", None))
+        .await;
+    match without_cert {
+        Err(_) => println!("✓ verify-full sin certificado CA falla como se espera"),
+        Ok(_) => return Err("BUG: verify-full conectó sin certificado CA (no debería)".into()),
+    }
+
+    let with_cert = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect_with(config.connect_options("aura_test_pw", Some(ca_path)))
+        .await?;
+    sqlx::query("SELECT 1").execute(&with_cert).await?;
+    with_cert.close().await;
+    println!("✓ verify-full con el certificado CA correcto conecta exitosamente");
+
+    Ok(())
 }
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
@@ -40,7 +100,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         username: "aura_test".into(),
         sslmode: "disable".into(),
     };
-    let pool = app_db::open_postgres(&config, "aura_test_pw").await?;
+    let pool = app_db::open_postgres(&config, "aura_test_pw", None).await?;
     println!("✓ conectado y migrado contra Postgres real");
 
     let onboarding = business_profile::postgres::onboarding_complete_setup(

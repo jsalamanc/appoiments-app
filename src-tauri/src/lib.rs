@@ -41,9 +41,12 @@ pub fn run() {
                     let password = storage_config::get_password(pg_config).expect(
                         "no se pudo leer la contraseña de PostgreSQL del almacén de credenciales",
                     );
-                    let pool =
-                        tauri::async_runtime::block_on(app_db::open_postgres(pg_config, &password))
-                            .expect("no se pudo conectar a PostgreSQL ni correr sus migraciones");
+                    let ca_cert = storage_config::ca_cert_path(&config_dir);
+                    let ca_cert = ca_cert.exists().then_some(ca_cert.as_path());
+                    let pool = tauri::async_runtime::block_on(app_db::open_postgres(
+                        pg_config, &password, ca_cert,
+                    ))
+                    .expect("no se pudo conectar a PostgreSQL ni correr sus migraciones");
                     AppState::new_postgres(pool)
                 }
             };

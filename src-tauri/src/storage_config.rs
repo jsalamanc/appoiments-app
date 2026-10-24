@@ -19,6 +19,7 @@ use sqlx::postgres::PgSslMode;
 
 const CONFIG_FILE_NAME: &str = "storage.json";
 const KEYRING_SERVICE: &str = "com.aurastudio.storage";
+const CA_CERT_FILE_NAME: &str = "postgres-ca.pem";
 
 /// Modo de almacenamiento de datos activo para esta instalación.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -64,15 +65,61 @@ impl PostgresConnectionConfig {
     /// `PgConnectOptions` en vez de construir una URI a mano para no tener que
     /// lidiar con el percent-encoding de caracteres especiales en usuario,
     /// contraseña o nombre de base.
-    pub fn connect_options(&self, password: &str) -> sqlx::postgres::PgConnectOptions {
+    ///
+    /// `ca_cert_path`, si se da, se usa como certificado raíz para validar el
+    /// servidor — necesario para que `sslmode=verify-ca`/`verify-full`
+    /// funcionen contra un servidor con certificado autofirmado o de una CA
+    /// privada (si no se provee, `verify-ca`/`verify-full` solo van a aceptar
+    /// certificados firmados por una CA ya confiada por el sistema operativo).
+    pub fn connect_options(
+        &self,
+        password: &str,
+        ca_cert_path: Option<&Path>,
+    ) -> sqlx::postgres::PgConnectOptions {
         let ssl_mode = PgSslMode::from_str(&self.sslmode).unwrap_or_default();
-        sqlx::postgres::PgConnectOptions::new()
+        let mut options = sqlx::postgres::PgConnectOptions::new()
             .host(&self.host)
             .port(self.port)
             .username(&self.username)
             .password(password)
             .database(&self.database)
-            .ssl_mode(ssl_mode)
+            .ssl_mode(ssl_mode);
+        if let Some(path) = ca_cert_path {
+            options = options.ssl_root_cert(path);
+        }
+        options
+    }
+}
+
+/// Ruta donde vive (si existe) el certificado CA que el usuario subió para
+/// validar su servidor PostgreSQL. Su sola existencia es la señal de "hay un
+/// certificado configurado" — no hace falta un flag aparte en `storage.json`,
+/// igual que la contraseña no necesita un flag aparte (vive en el keychain).
+pub fn ca_cert_path(config_dir: &Path) -> PathBuf {
+    config_dir.join(CA_CERT_FILE_NAME)
+}
+
+/// Copia el certificado elegido por el usuario (file picker, ruta absoluta)
+/// al directorio de configuración de la app, reemplazando cualquier
+/// certificado anterior. Mismo patrón que `util::photos::import_photo`: la
+/// app nunca depende de que el archivo original siga existiendo en su
+/// ubicación de origen.
+pub fn save_ca_cert(config_dir: &Path, source_file_path: &Path) -> std::io::Result<PathBuf> {
+    fs::create_dir_all(config_dir)?;
+    let dest = ca_cert_path(config_dir);
+    fs::copy(source_file_path, &dest)?;
+    Ok(dest)
+}
+
+/// Borra el certificado CA guardado, si lo hay. Se usa al cambiar a un modo
+/// o configuración que ya no lo necesita, para no dejar un certificado viejo
+/// activándose en silencio en una reconexión futura.
+pub fn delete_ca_cert(config_dir: &Path) -> std::io::Result<()> {
+    let path = ca_cert_path(config_dir);
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
     }
 }
 
