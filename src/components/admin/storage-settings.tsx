@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { FadeIn } from "@/components/motion/fade-in";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -37,6 +38,21 @@ type StorageMode =
 
 type SelectedMode = "local" | "postgres";
 
+type MigrationSummary = {
+  businessProfile: number;
+  users: number;
+  customers: number;
+  employees: number;
+  products: number;
+  services: number;
+  packages: number;
+  packageItems: number;
+  appointments: number;
+  sales: number;
+  saleItems: number;
+  inventoryMovements: number;
+};
+
 const EMPTY_PG_CONFIG: PostgresConfig = {
   host: "",
   port: 5432,
@@ -52,6 +68,7 @@ export function StorageSettings() {
   const [pgConfig, setPgConfig] = useState<PostgresConfig>(EMPTY_PG_CONFIG);
   const [password, setPassword] = useState("");
   const [caCertPath, setCaCertPath] = useState<string | null>(null);
+  const [migrateData, setMigrateData] = useState(true);
   const [testing, setTesting] = useState(false);
   const [switching, setSwitching] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -149,17 +166,25 @@ export function StorageSettings() {
   const applySwitch = async () => {
     setSwitching(true);
     try {
+      let summary: MigrationSummary | null = null;
       if (selected === "local") {
         await invoke("storage_switch_mode", { mode: "local" });
       } else {
-        await invoke("storage_switch_mode", {
+        summary = await invoke<MigrationSummary | null>("storage_switch_mode", {
           mode: "postgres",
           config: pgConfig,
           password,
           caCertPath: needsCaCert ? caCertPath : null,
+          migrateData: currentMode === "local" ? migrateData : false,
         });
       }
-      toast.success("Modo de almacenamiento actualizado. Reiniciando...");
+      if (summary) {
+        toast.success(
+          `Datos migrados: ${summary.customers} clientes, ${summary.appointments} citas, ${summary.sales} ventas. Reiniciando...`
+        );
+      } else {
+        toast.success("Modo de almacenamiento actualizado. Reiniciando...");
+      }
       await relaunch();
     } catch (err) {
       toast.error(
@@ -360,20 +385,39 @@ export function StorageSettings() {
             <AlertDialogDescription>
               {selected === "local"
                 ? "La app volverá a usar su base de datos local y se reiniciará."
-                : "La app se conectará a la base de datos PostgreSQL indicada y se reiniciará. Los datos que tengas localmente no se copian automáticamente — esta base externa debe estar vacía o ya tener los datos que quieres usar."}
+                : currentMode === "local" && migrateData
+                  ? "La app se conectará a la base de datos PostgreSQL indicada, copiará tus datos locales hacia ella y se reiniciará."
+                  : "La app se conectará a la base de datos PostgreSQL indicada y se reiniciará. Los datos que tengas localmente no se copian — esta base externa debe estar vacía o ya tener los datos que quieres usar."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           {currentMode === "local" && selected === "postgres" && (
-            <Button
-              type="button"
-              variant="outline"
-              className="w-fit"
-              disabled={exporting}
-              onClick={() => void exportBackup()}
-            >
-              <Download data-icon="inline-start" />
-              {exporting ? "Generando respaldo..." : "Descargar respaldo de mis datos (JSON)"}
-            </Button>
+            <div className="space-y-3">
+              <label className="flex items-start gap-2 text-sm">
+                <Checkbox
+                  className="mt-0.5"
+                  checked={migrateData}
+                  onCheckedChange={(checked) => setMigrateData(checked)}
+                />
+                <span>
+                  Migrar mis datos locales a esta base de datos
+                  <span className="block text-xs text-muted-foreground">
+                    {migrateData
+                      ? "Se copiarán tus clientes, empleados, servicios, citas, ventas y demás datos del negocio a esta base PostgreSQL (debe estar vacía)."
+                      : "La base de datos PostgreSQL quedará vacía: tendrás que crear tu negocio y cargar tus datos desde cero."}
+                  </span>
+                </span>
+              </label>
+              <Button
+                type="button"
+                variant="outline"
+                className="w-fit"
+                disabled={exporting}
+                onClick={() => void exportBackup()}
+              >
+                <Download data-icon="inline-start" />
+                {exporting ? "Generando respaldo..." : "Descargar respaldo de mis datos (JSON)"}
+              </Button>
+            </div>
           )}
           <AlertDialogFooter>
             <AlertDialogCancel disabled={switching}>Cancelar</AlertDialogCancel>

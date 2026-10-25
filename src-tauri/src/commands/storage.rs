@@ -7,6 +7,7 @@ use crate::app_db;
 use crate::app_db::AppDb;
 use crate::error::{AppError, AppResult};
 use crate::export;
+use crate::migration::{self, MigrationSummary};
 use crate::state::AppState;
 use crate::storage_config::{self, PostgresConnectionConfig, StorageMode};
 
@@ -64,8 +65,9 @@ pub async fn storage_test_connection(
 }
 
 /// Cambia el modo de almacenamiento activo. Para `postgres`, se conecta y se
-/// corren las migraciones contra el destino ANTES de persistir nada — si algo
-/// falla, `storage.json` queda exactamente como estaba (no hace falta un
+/// corren las migraciones de esquema contra el destino, y opcionalmente se
+/// migran los datos locales (issue #11) — todo ANTES de persistir nada — si
+/// algo falla, `storage.json` queda exactamente como estaba (no hace falta un
 /// "revert" explícito, el orden de las operaciones ya lo garantiza). El
 /// frontend es responsable de reiniciar la app (`relaunch()` del plugin
 /// `process`) después de un cambio exitoso: `AppState` ya quedó construido
@@ -78,7 +80,8 @@ pub async fn storage_switch_mode(
     config: Option<PostgresConnectionConfig>,
     password: Option<String>,
     ca_cert_path: Option<String>,
-) -> AppResult<()> {
+    migrate_data: Option<bool>,
+) -> AppResult<Option<MigrationSummary>> {
     state.require_owner()?;
     let dir = config_dir(&app)?;
 
@@ -90,7 +93,7 @@ pub async fn storage_switch_mode(
             // futura a Postgres herede en silencio un certificado viejo.
             storage_config::delete_ca_cert(&dir)
                 .map_err(|e| AppError::Internal(format!("no se pudo limpiar el certificado CA: {e}")))?;
-            Ok(())
+            Ok(None)
         }
         "postgres" => {
             let config = config.ok_or_else(|| AppError::validation("Faltan los datos de conexión"))?;
@@ -114,16 +117,29 @@ pub async fn storage_switch_mode(
                 }
             };
 
-            app_db::open_postgres(&config, &password, saved_ca_cert.as_deref())
+            let pg_pool = app_db::open_postgres(&config, &password, saved_ca_cert.as_deref())
                 .await
                 .map_err(|e| AppError::validation(format!("No se pudo preparar la base de datos: {e}")))?;
+
+            // Guard de seguridad del lado del servidor, independiente de lo
+            // que mande la UI: la migración automática solo tiene sentido
+            // (y solo se ofreció) yendo de Local hacia Postgres.
+            let should_migrate = migrate_data.unwrap_or(false) && matches!(&state.db, AppDb::Sqlite(_));
+            let migration_summary = if should_migrate {
+                let summary = migration::migrate_local_to_postgres(&state.db, &pg_pool)
+                    .await
+                    .map_err(|e| AppError::validation(format!("No se pudo migrar los datos locales: {e}")))?;
+                Some(summary)
+            } else {
+                None
+            };
 
             storage_config::set_password(&config, &password)
                 .map_err(|e| AppError::Internal(format!("no se pudo guardar la contraseña: {e}")))?;
             storage_config::save(&dir, &StorageMode::Postgres(config))
                 .map_err(|e| AppError::Internal(format!("no se pudo guardar la configuración: {e}")))?;
 
-            Ok(())
+            Ok(migration_summary)
         }
         _ => Err(AppError::validation("Modo de almacenamiento inválido")),
     }
