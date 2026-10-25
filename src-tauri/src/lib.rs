@@ -4,6 +4,7 @@ pub mod commands;
 pub mod db;
 pub mod error;
 pub mod export;
+pub mod migration;
 pub mod models;
 pub mod repositories;
 pub mod state;

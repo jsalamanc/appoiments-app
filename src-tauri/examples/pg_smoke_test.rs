@@ -46,6 +46,7 @@ use aura_studio_lib::repositories::{
 use aura_studio_lib::storage_config::PostgresConnectionConfig;
 
 fn main() {
+    tauri::async_runtime::block_on(run_migration_checks()).expect("pruebas de migración fallaron");
     tauri::async_runtime::block_on(run()).expect("smoke test falló");
 
     match std::env::var("PG_SMOKE_TEST_CA_CERT") {
@@ -88,6 +89,150 @@ async fn run_ssl_check(ca_path: &std::path::Path) -> Result<(), Box<dyn std::err
     sqlx::query("SELECT 1").execute(&with_cert).await?;
     with_cert.close().await;
     println!("✓ verify-full con el certificado CA correcto conecta exitosamente");
+
+    Ok(())
+}
+
+/// Verifica la migración automática de datos locales (issue #11): arma un
+/// SQLite en memoria con una fila en cada una de las 12 tablas migradas
+/// (incluida una cita y una venta que se referencian mutuamente, y un usuario
+/// con una contraseña hasheada de verdad), migra hacia el Postgres de prueba
+/// (debe estar vacío) y confirma los conteos, el enlace circular
+/// appointments↔sales, y que el owner migrado puede loguearse con su
+/// contraseña original (prueba de que `password_hash` nunca se re-hashea).
+/// También confirma que un segundo intento de migración contra el mismo
+/// destino (ya no vacío) se rechaza. Al final deja el Postgres vacío otra vez
+/// (`TRUNCATE`) para que `run()` pueda arrancar desde cero, como ya
+/// documenta la cabecera de este archivo.
+async fn run_migration_checks() -> Result<(), Box<dyn std::error::Error>> {
+    let config = PostgresConnectionConfig {
+        host: "127.0.0.1".into(),
+        port: 55432,
+        database: "aura_studio_test".into(),
+        username: "aura_test".into(),
+        sslmode: "disable".into(),
+    };
+    let pool = app_db::open_postgres(&config, "aura_test_pw", None).await?;
+
+    let mut conn = rusqlite::Connection::open_in_memory()?;
+    aura_studio_lib::db::migrations().to_latest(&mut conn)?;
+
+    let now = "2026-01-01T00:00:00Z";
+    let hash = aura_studio_lib::auth::hash_password("migracion-test-123")?;
+    conn.execute(
+        "INSERT INTO business_profile
+            (id, name, module_employees, module_appointments, module_services,
+             module_packages, module_reports, created_at, updated_at)
+         VALUES (1, 'Negocio Migrado', 1, 1, 1, 1, 1, ?1, ?1)",
+        rusqlite::params![now],
+    )?;
+    conn.execute(
+        "INSERT INTO users (id, name, username, password_hash, role, active, created_at, updated_at)
+         VALUES ('user-1', 'Owner Migrado', 'owner_migrado', ?1, 'owner', 1, ?2, ?2)",
+        rusqlite::params![hash, now],
+    )?;
+    conn.execute(
+        "INSERT INTO customers (id, name, phone, email, document, created_at, updated_at)
+         VALUES ('cust-1', 'Cliente Migrado', '3000000001', 'migrado@test.com', '111111', ?1, ?1)",
+        rusqlite::params![now],
+    )?;
+    conn.execute(
+        "INSERT INTO employees (id, name, color, active, created_at, updated_at)
+         VALUES ('emp-1', 'Empleado Migrado', '#00ff00', 1, ?1, ?1)",
+        rusqlite::params![now],
+    )?;
+    conn.execute(
+        "INSERT INTO products (id, name, price, status, stock, created_at, updated_at)
+         VALUES ('prod-1', 'Producto Migrado', 9999.0, 'published', 5, ?1, ?1)",
+        rusqlite::params![now],
+    )?;
+    conn.execute(
+        "INSERT INTO services (id, name, price, duration_minutes, status, created_at, updated_at)
+         VALUES ('svc-1', 'Servicio Migrado', 5000.0, 45, 'published', ?1, ?1)",
+        rusqlite::params![now],
+    )?;
+    conn.execute(
+        "INSERT INTO packages (id, name, price, status, created_at, updated_at)
+         VALUES ('pkg-1', 'Paquete Migrado', 12000.0, 'published', ?1, ?1)",
+        rusqlite::params![now],
+    )?;
+    conn.execute(
+        "INSERT INTO package_items (id, package_id, item_type, product_id, quantity, created_at)
+         VALUES ('pkgitem-1', 'pkg-1', 'product', 'prod-1', 1, ?1)",
+        rusqlite::params![now],
+    )?;
+    conn.execute(
+        "INSERT INTO appointments
+            (id, employee_id, customer_id, service_id, service_name_snapshot,
+             starts_at, ends_at, status, sale_id, created_at, updated_at)
+         VALUES ('appt-1', 'emp-1', 'cust-1', 'svc-1', 'Servicio Migrado',
+                 ?1, '2026-01-01T01:00:00Z', 'completed', 'sale-1', ?1, ?1)",
+        rusqlite::params![now],
+    )?;
+    conn.execute(
+        "INSERT INTO sales (id, customer_id, appointment_id, payment_method, total, sold_at, created_at)
+         VALUES ('sale-1', 'cust-1', 'appt-1', 'cash', 5000.0, ?1, ?1)",
+        rusqlite::params![now],
+    )?;
+    conn.execute(
+        "INSERT INTO sale_items
+            (id, sale_id, item_type, service_id, name_snapshot, unit_price, quantity, line_total, created_at)
+         VALUES ('saleitem-1', 'sale-1', 'service', 'svc-1', 'Servicio Migrado', 5000.0, 1, 5000.0, ?1)",
+        rusqlite::params![now],
+    )?;
+    conn.execute(
+        "INSERT INTO inventory_movements (id, product_id, movement_type, quantity_delta, stock_after, created_at)
+         VALUES ('inv-1', 'prod-1', 'initial', 5, 5, ?1)",
+        rusqlite::params![now],
+    )?;
+
+    let snapshot = aura_studio_lib::migration::read_local_snapshot(&mut conn)?;
+    let summary = aura_studio_lib::migration::write_snapshot_to_postgres(&pool, snapshot).await?;
+    if summary.customers != 1 || summary.appointments != 1 || summary.sales != 1 || summary.users != 1 {
+        return Err(format!("BUG: conteos de migración inesperados: {summary:?}").into());
+    }
+    println!("✓ migración de datos locales: {summary:?}");
+
+    let linked_sale_id: Option<String> =
+        sqlx::query_scalar("SELECT sale_id FROM appointments WHERE id = $1")
+            .bind("appt-1")
+            .fetch_one(&pool)
+            .await?;
+    if linked_sale_id.as_deref() != Some("sale-1") {
+        return Err("BUG: la cita migrada no quedó enlazada a la venta migrada".into());
+    }
+    println!("✓ el enlace circular appointments<->sales sobrevivió la migración");
+
+    auth::postgres::login(&pool, "owner_migrado".into(), "migracion-test-123".into(), false).await?;
+    println!(
+        "✓ el owner migrado puede loguearse con su contraseña original \
+         (password_hash no se re-hasheó)"
+    );
+
+    // Rechazo: el destino ya no está vacío (lo acabamos de poblar), un
+    // segundo intento de migración debe fallar sin tocar nada.
+    let mut conn2 = rusqlite::Connection::open_in_memory()?;
+    aura_studio_lib::db::migrations().to_latest(&mut conn2)?;
+    let empty_snapshot = aura_studio_lib::migration::read_local_snapshot(&mut conn2)?;
+    match aura_studio_lib::migration::write_snapshot_to_postgres(&pool, empty_snapshot).await {
+        Err(e) if e.to_string().contains("no está vacía") => {
+            println!("✓ la migración rechaza un destino que ya tiene datos: {e}")
+        }
+        Err(e) => {
+            return Err(format!("BUG: mensaje inesperado al rechazar destino no vacío: {e}").into())
+        }
+        Ok(_) => return Err("BUG: se permitió migrar hacia un destino con datos".into()),
+    }
+
+    // Deja la base vacía otra vez para que `run()` pueda arrancar desde cero.
+    sqlx::query(
+        "TRUNCATE TABLE sessions, inventory_movements, sale_items, sales, appointments, \
+         package_items, packages, services, products, employees, customers, users, \
+         business_profile RESTART IDENTITY CASCADE",
+    )
+    .execute(&pool)
+    .await?;
+    pool.close().await;
 
     Ok(())
 }
