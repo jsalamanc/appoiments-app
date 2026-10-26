@@ -6,7 +6,7 @@ use crate::error::{AppError, AppResult};
 use crate::repositories::packages as repo;
 use crate::state::AppState;
 use crate::util::catalog::CatalogCounts;
-use crate::util::photos::import_photo;
+use crate::util::photos::import_and_sync_photo;
 
 #[derive(Debug, Serialize)]
 pub struct ProductRef {
@@ -171,6 +171,9 @@ pub async fn import_package_photo(
     let data_dir = app.path().app_data_dir().map_err(|e| {
         AppError::Internal(format!("no se pudo resolver el directorio de datos: {e}"))
     })?;
+    let config_dir = app.path().app_config_dir().map_err(|e| {
+        AppError::Internal(format!("no se pudo resolver el directorio de configuración: {e}"))
+    })?;
 
-    import_photo(&data_dir, "packages", &source_file_path)
+    import_and_sync_photo(&data_dir, &config_dir, &state.db, "packages", &source_file_path).await
 }

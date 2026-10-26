@@ -7,7 +7,7 @@ use crate::models::product::Product;
 use crate::repositories::products as repo;
 use crate::state::AppState;
 use crate::util::catalog::CatalogCounts;
-use crate::util::photos::import_photo;
+use crate::util::photos::import_and_sync_photo;
 
 #[derive(Debug, Serialize)]
 pub struct ListProductsResult {
@@ -115,7 +115,8 @@ pub async fn set_product_stock(
 /// Copia la foto elegida por el usuario (file picker, ruta absoluta) al
 /// directorio de datos de la app y devuelve la ruta relativa a guardar en
 /// `photo_path` (el comando NO actualiza la fila; el frontend llama luego a
-/// `update_product` con el valor devuelto).
+/// `update_product` con el valor devuelto). En modo "Base de datos propia"
+/// también la sube al bucket configurado (ver `import_and_sync_photo`).
 #[tauri::command]
 pub async fn import_product_photo(
     app: AppHandle,
@@ -136,6 +137,9 @@ pub async fn import_product_photo(
     let data_dir = app.path().app_data_dir().map_err(|e| {
         AppError::Internal(format!("no se pudo resolver el directorio de datos: {e}"))
     })?;
+    let config_dir = app.path().app_config_dir().map_err(|e| {
+        AppError::Internal(format!("no se pudo resolver el directorio de configuración: {e}"))
+    })?;
 
-    import_photo(&data_dir, "products", &source_file_path)
+    import_and_sync_photo(&data_dir, &config_dir, &state.db, "products", &source_file_path).await
 }
