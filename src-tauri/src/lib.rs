@@ -132,6 +132,7 @@ pub fn run() {
             commands::bucket::bucket_get_config,
             commands::bucket::bucket_test_connection,
             commands::bucket::resolve_photo_cache,
+            commands::bucket::discard_photo,
         ])
         .run(tauri::generate_context!())
         .expect("error al ejecutar la aplicación Tauri");

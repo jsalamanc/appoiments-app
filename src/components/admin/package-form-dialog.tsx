@@ -21,6 +21,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import type { CatalogStatus } from "@/lib/catalog-status";
+import { withPhotoRollback } from "@/lib/photo-path";
 import { packageSchema, type PackageValues } from "@/lib/validations";
 import type { PackageWithItems, Product, Service } from "@/types/database";
 
@@ -107,11 +108,13 @@ export function PackageFormDialog({
     try {
       const basePhotoPath = clearPhoto ? null : pkg?.photo_path ?? null;
       let photoPath = basePhotoPath;
+      let freshPhotoPath: string | null = null;
       if (pendingPhoto && pkg) {
-        photoPath = await invoke<string>("import_package_photo", {
+        freshPhotoPath = await invoke<string>("import_package_photo", {
           packageId: pkg.id,
           sourceFilePath: pendingPhoto,
         });
+        photoPath = freshPhotoPath;
       }
 
       const payload: PackageInputPayload = {
@@ -128,7 +131,9 @@ export function PackageFormDialog({
       };
 
       if (pkg) {
-        await invoke("update_package", { id: pkg.id, input: payload });
+        await withPhotoRollback(freshPhotoPath, () =>
+          invoke("update_package", { id: pkg.id, input: payload })
+        );
       } else {
         const created = await invoke<{ id: string }>("create_package", {
           input: payload,
@@ -142,10 +147,12 @@ export function PackageFormDialog({
               sourceFilePath: pendingPhoto,
             }
           );
-          await invoke("update_package", {
-            id: created.id,
-            input: { ...payload, photoPath: createdPhotoPath },
-          });
+          await withPhotoRollback(createdPhotoPath, () =>
+            invoke("update_package", {
+              id: created.id,
+              input: { ...payload, photoPath: createdPhotoPath },
+            })
+          );
         }
       }
 

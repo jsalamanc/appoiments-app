@@ -19,6 +19,7 @@ import { ImageUpload } from "@/components/ui/image-upload";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { CatalogStatus } from "@/lib/catalog-status";
+import { withPhotoRollback } from "@/lib/photo-path";
 import { productSchema, type ProductValues } from "@/lib/validations";
 import type { Product } from "@/types/database";
 
@@ -80,11 +81,13 @@ export function ProductFormDialog({
 
       if (product) {
         let photoPath = basePhotoPath;
+        let freshPhotoPath: string | null = null;
         if (pendingPhoto) {
-          photoPath = await invoke<string>("import_product_photo", {
+          freshPhotoPath = await invoke<string>("import_product_photo", {
             productId: product.id,
             sourceFilePath: pendingPhoto,
           });
+          photoPath = freshPhotoPath;
         }
 
         const payload: ProductInputPayload = {
@@ -93,7 +96,9 @@ export function ProductFormDialog({
           photoPath,
           status: values.status,
         };
-        await invoke("update_product", { id: product.id, input: payload });
+        await withPhotoRollback(freshPhotoPath, () =>
+          invoke("update_product", { id: product.id, input: payload })
+        );
 
         if (values.stock !== product.stock) {
           await invoke("set_product_stock", {
@@ -124,10 +129,12 @@ export function ProductFormDialog({
             productId: created.id,
             sourceFilePath: pendingPhoto,
           });
-          await invoke("update_product", {
-            id: created.id,
-            input: { ...createPayload, photoPath },
-          });
+          await withPhotoRollback(photoPath, () =>
+            invoke("update_product", {
+              id: created.id,
+              input: { ...createPayload, photoPath },
+            })
+          );
         }
 
         if (values.stock > 0) {

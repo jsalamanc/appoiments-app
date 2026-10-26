@@ -4,6 +4,7 @@ use crate::bucket_config::{self, BucketConfig};
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 use crate::util::bucket::BucketClient;
+use crate::util::photos::cleanup_old_photo;
 
 fn data_dir(app: &AppHandle) -> AppResult<std::path::PathBuf> {
     app.path()
@@ -71,4 +72,16 @@ pub async fn resolve_photo_cache(app: AppHandle, photo_path: String) -> AppResul
         .map_err(|e| AppError::Internal(format!("no se pudo escribir la imagen descargada: {e}")))?;
 
     Ok(photo_path)
+}
+
+/// Borra una foto recién importada (`import_*_photo`) que nunca llegó a
+/// guardarse en ninguna fila — el caso en que el `update_*` posterior falla
+/// (validación, red) y el frontend, en vez de quedarse con un huérfano,
+/// descarta explícitamente lo que acababa de subir. Cierra el último hueco
+/// del issue #18: ver `cleanup_old_photo` para el resto de los casos
+/// (reemplazo y borrado de un registro ya guardado).
+#[tauri::command]
+pub async fn discard_photo(app: AppHandle, state: State<'_, AppState>, photo_path: String) -> AppResult<()> {
+    cleanup_old_photo(&data_dir(&app)?, &config_dir(&app)?, &state.db, Some(&photo_path)).await;
+    Ok(())
 }

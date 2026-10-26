@@ -30,3 +30,27 @@ export async function resolvePhotoSrc(
   const absolute = await join(dataDir, cachedPath);
   return convertFileSrc(absolute);
 }
+
+/**
+ * Ejecuta `save` (normalmente `update_product`/`update_service`/
+ * `update_package`) y, si falla, descarta `freshPhotoPath` antes de
+ * relanzar el error — evita que una foto recién subida con
+ * `import_*_photo` quede huérfana (en disco y, en modo "Base de datos
+ * propia", también en el bucket) cuando el guardado que debía referenciarla
+ * no se completa. No-op si `freshPhotoPath` es null: nunca se importó una
+ * foto nueva en este intento de guardado, así que no hay nada que
+ * descartar.
+ */
+export async function withPhotoRollback<T>(
+  freshPhotoPath: string | null,
+  save: () => Promise<T>
+): Promise<T> {
+  try {
+    return await save();
+  } catch (err) {
+    if (freshPhotoPath) {
+      await invoke("discard_photo", { photoPath: freshPhotoPath }).catch(() => {});
+    }
+    throw err;
+  }
+}

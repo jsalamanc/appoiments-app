@@ -59,22 +59,33 @@ pub async fn import_and_sync_photo(
     let photo_path = import_photo(data_dir, folder, source_file_path)?;
 
     if matches!(db, AppDb::Postgres(_)) {
-        let cfg = bucket_config::load_bucket(config_dir).ok_or_else(|| {
-            AppError::Internal(
-                "no hay un bucket configurado; el modo \"Base de datos propia\" requiere uno"
-                    .to_string(),
-            )
-        })?;
-        let secret = bucket_config::get_bucket_secret(&cfg).map_err(|e| {
-            AppError::Internal(format!("no se pudo leer la credencial del bucket: {e}"))
-        })?;
-        let client = BucketClient::new(&cfg, &secret)?;
-        let bytes = std::fs::read(data_dir.join(&photo_path))
-            .map_err(|e| AppError::Internal(format!("no se pudo leer la imagen recién copiada: {e}")))?;
-        client.put_object(&cfg.object_key(&photo_path), bytes).await?;
+        // Si la subida al bucket falla por cualquier motivo, la copia local
+        // recién creada no debe sobrevivir: nadie va a recibir este
+        // `photo_path` (el comando devuelve el error, no el path), así que
+        // dejarla sería un huérfano inmediato — mismo espíritu que
+        // `cleanup_old_photo`, pero acá limpiando el lado local que sí se
+        // alcanzó a escribir.
+        if let Err(e) = upload_to_bucket(data_dir, config_dir, &photo_path).await {
+            let _ = std::fs::remove_file(data_dir.join(&photo_path));
+            return Err(e);
+        }
     }
 
     Ok(photo_path)
+}
+
+async fn upload_to_bucket(data_dir: &Path, config_dir: &Path, photo_path: &str) -> AppResult<()> {
+    let cfg = bucket_config::load_bucket(config_dir).ok_or_else(|| {
+        AppError::Internal(
+            "no hay un bucket configurado; el modo \"Base de datos propia\" requiere uno".to_string(),
+        )
+    })?;
+    let secret = bucket_config::get_bucket_secret(&cfg)
+        .map_err(|e| AppError::Internal(format!("no se pudo leer la credencial del bucket: {e}")))?;
+    let client = BucketClient::new(&cfg, &secret)?;
+    let bytes = std::fs::read(data_dir.join(photo_path))
+        .map_err(|e| AppError::Internal(format!("no se pudo leer la imagen recién copiada: {e}")))?;
+    client.put_object(&cfg.object_key(photo_path), bytes).await
 }
 
 /// Borra `photo_path` del disco local y, en modo Postgres, también del
