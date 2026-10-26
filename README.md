@@ -123,3 +123,7 @@ usuarios que ya instalaron una versión firmada con él.
   una v0.1.1 siguiendo los mismos pasos — la app instalada debería
   detectarla sola al abrir el panel, o al pulsar "Buscar actualizaciones"
   en Ajustes.
+
+## Licencia
+
+Este proyecto se distribuye bajo la licencia [MIT](LICENSE).
