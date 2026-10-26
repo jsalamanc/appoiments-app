@@ -5,11 +5,13 @@ use tauri::{AppHandle, Manager, State};
 
 use crate::app_db;
 use crate::app_db::AppDb;
+use crate::bucket_config::{self, BucketConfig};
 use crate::error::{AppError, AppResult};
 use crate::export;
 use crate::migration::{self, MigrationSummary};
 use crate::state::AppState;
 use crate::storage_config::{self, PostgresConnectionConfig, StorageMode};
+use crate::util::bucket::BucketClient;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -17,6 +19,12 @@ fn config_dir(app: &AppHandle) -> AppResult<std::path::PathBuf> {
     app.path()
         .app_config_dir()
         .map_err(|e| AppError::Internal(format!("no se pudo resolver el directorio de configuración: {e}")))
+}
+
+fn data_dir(app: &AppHandle) -> AppResult<std::path::PathBuf> {
+    app.path()
+        .app_data_dir()
+        .map_err(|e| AppError::Internal(format!("no se pudo resolver el directorio de datos: {e}")))
 }
 
 /// Modo de almacenamiento activo, para que Ajustes sepa qué mostrar
@@ -66,12 +74,19 @@ pub async fn storage_test_connection(
 
 /// Cambia el modo de almacenamiento activo. Para `postgres`, se conecta y se
 /// corren las migraciones de esquema contra el destino, y opcionalmente se
-/// migran los datos locales (issue #11) — todo ANTES de persistir nada — si
-/// algo falla, `storage.json` queda exactamente como estaba (no hace falta un
-/// "revert" explícito, el orden de las operaciones ya lo garantiza). El
-/// frontend es responsable de reiniciar la app (`relaunch()` del plugin
-/// `process`) después de un cambio exitoso: `AppState` ya quedó construido
-/// contra el backend anterior y no se puede reemplazar en caliente.
+/// migran los datos locales (issue #11), incluidas las imágenes del catálogo
+/// al bucket configurado (issue #18) — todo ANTES de persistir nada — si algo
+/// falla, `storage.json`/`bucket.json` quedan exactamente como estaban (no
+/// hace falta un "revert" explícito, el orden de las operaciones ya lo
+/// garantiza). El frontend es responsable de reiniciar la app (`relaunch()`
+/// del plugin `process`) después de un cambio exitoso: `AppState` ya quedó
+/// construido contra el backend anterior y no se puede reemplazar en
+/// caliente.
+///
+/// El bucket es obligatorio en modo `postgres` (issue #18): las imágenes del
+/// catálogo necesitan un destino remoto para no quedar atadas al disco de
+/// una sola instalación.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn storage_switch_mode(
     app: AppHandle,
@@ -81,6 +96,8 @@ pub async fn storage_switch_mode(
     password: Option<String>,
     ca_cert_path: Option<String>,
     migrate_data: Option<bool>,
+    bucket_config: Option<BucketConfig>,
+    bucket_secret: Option<String>,
 ) -> AppResult<Option<MigrationSummary>> {
     state.require_owner()?;
     let dir = config_dir(&app)?;
@@ -98,6 +115,21 @@ pub async fn storage_switch_mode(
         "postgres" => {
             let config = config.ok_or_else(|| AppError::validation("Faltan los datos de conexión"))?;
             let password = password.ok_or_else(|| AppError::validation("Falta la contraseña"))?;
+            // El bucket es obligatorio en este modo (issue #18): las subidas
+            // de fotos del catálogo lo necesitan desde el primer momento, no
+            // solo si se migran datos existentes.
+            let bucket_config = bucket_config
+                .ok_or_else(|| AppError::validation("Falta configurar un bucket en la nube para las imágenes"))?;
+            let bucket_secret = bucket_secret
+                .ok_or_else(|| AppError::validation("Falta la credencial (Secret Access Key) del bucket"))?;
+
+            // Se prueba el bucket ANTES de tocar Postgres: si no sirve, se
+            // falla rápido sin haber abierto ninguna conexión todavía.
+            let bucket_client = BucketClient::new(&bucket_config, &bucket_secret)?;
+            bucket_client
+                .test_connection()
+                .await
+                .map_err(|e| AppError::validation(format!("No se pudo validar el bucket: {e}")))?;
 
             // El certificado se copia a la carpeta de configuración ANTES de
             // probar la conexión, para validar contra la copia que de verdad
@@ -126,9 +158,16 @@ pub async fn storage_switch_mode(
             // (y solo se ofreció) yendo de Local hacia Postgres.
             let should_migrate = migrate_data.unwrap_or(false) && matches!(&state.db, AppDb::Sqlite(_));
             let migration_summary = if should_migrate {
-                let summary = migration::migrate_local_to_postgres(&state.db, &pg_pool)
-                    .await
-                    .map_err(|e| AppError::validation(format!("No se pudo migrar los datos locales: {e}")))?;
+                let data_dir = data_dir(&app)?;
+                let summary = migration::migrate_local_to_postgres(
+                    &state.db,
+                    &pg_pool,
+                    &data_dir,
+                    &bucket_config,
+                    &bucket_client,
+                )
+                .await
+                        .map_err(|e| AppError::validation(format!("No se pudo migrar los datos locales: {e}")))?;
                 Some(summary)
             } else {
                 None
@@ -138,6 +177,10 @@ pub async fn storage_switch_mode(
                 .map_err(|e| AppError::Internal(format!("no se pudo guardar la contraseña: {e}")))?;
             storage_config::save(&dir, &StorageMode::Postgres(config))
                 .map_err(|e| AppError::Internal(format!("no se pudo guardar la configuración: {e}")))?;
+            bucket_config::set_bucket_secret(&bucket_config, &bucket_secret)
+                .map_err(|e| AppError::Internal(format!("no se pudo guardar la credencial del bucket: {e}")))?;
+            bucket_config::save_bucket(&dir, &bucket_config)
+                .map_err(|e| AppError::Internal(format!("no se pudo guardar la configuración del bucket: {e}")))?;
 
             Ok(migration_summary)
         }
