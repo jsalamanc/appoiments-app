@@ -51,6 +51,24 @@ type MigrationSummary = {
   sales: number;
   saleItems: number;
   inventoryMovements: number;
+  imagesMigrated: number;
+};
+
+type BucketProvider =
+  | "aws_s3"
+  | "cloudflare_r2"
+  | "backblaze_b2"
+  | "digital_ocean_spaces"
+  | "custom";
+
+type BucketConfig = {
+  provider: BucketProvider;
+  endpoint: string;
+  region: string;
+  bucket: string;
+  prefix: string | null;
+  accessKeyId: string;
+  pathStyle: boolean;
 };
 
 const EMPTY_PG_CONFIG: PostgresConfig = {
@@ -59,6 +77,54 @@ const EMPTY_PG_CONFIG: PostgresConfig = {
   database: "",
   username: "",
   sslmode: "prefer",
+};
+
+const EMPTY_BUCKET_CONFIG: BucketConfig = {
+  provider: "aws_s3",
+  endpoint: "",
+  region: "",
+  bucket: "",
+  prefix: null,
+  accessKeyId: "",
+  pathStyle: false,
+};
+
+// Solo para sugerir valores al elegir un proveedor en la UI — el cliente
+// S3-compatible del backend es el mismo para todos (ver issue #18).
+const PROVIDER_PRESETS: Record<
+  BucketProvider,
+  { label: string; endpointHint: string; defaultRegion: string; defaultPathStyle: boolean }
+> = {
+  aws_s3: {
+    label: "AWS S3",
+    endpointHint: "https://s3.<región>.amazonaws.com",
+    defaultRegion: "us-east-1",
+    defaultPathStyle: false,
+  },
+  cloudflare_r2: {
+    label: "Cloudflare R2",
+    endpointHint: "https://<account_id>.r2.cloudflarestorage.com",
+    defaultRegion: "auto",
+    defaultPathStyle: false,
+  },
+  backblaze_b2: {
+    label: "Backblaze B2",
+    endpointHint: "https://s3.<región>.backblazeb2.com",
+    defaultRegion: "us-west-002",
+    defaultPathStyle: false,
+  },
+  digital_ocean_spaces: {
+    label: "DigitalOcean Spaces",
+    endpointHint: "https://<región>.digitaloceanspaces.com",
+    defaultRegion: "nyc3",
+    defaultPathStyle: false,
+  },
+  custom: {
+    label: "Otro (compatible con S3)",
+    endpointHint: "https://mi-servidor-s3.ejemplo.com",
+    defaultRegion: "",
+    defaultPathStyle: true,
+  },
 };
 
 export function StorageSettings() {
@@ -70,6 +136,9 @@ export function StorageSettings() {
   const [caCertPath, setCaCertPath] = useState<string | null>(null);
   const [migrateData, setMigrateData] = useState(true);
   const [testing, setTesting] = useState(false);
+  const [bucketConfig, setBucketConfig] = useState<BucketConfig>(EMPTY_BUCKET_CONFIG);
+  const [bucketSecret, setBucketSecret] = useState("");
+  const [bucketTesting, setBucketTesting] = useState(false);
   const [switching, setSwitching] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -88,6 +157,8 @@ export function StorageSettings() {
           username: mode.username,
           sslmode: mode.sslmode,
         });
+        const bucket = await invoke<BucketConfig | null>("bucket_get_config");
+        if (bucket) setBucketConfig(bucket);
       }
     } catch (err) {
       toast.error(
@@ -112,6 +183,13 @@ export function StorageSettings() {
 
   const needsCaCert =
     pgConfig.sslmode === "verify-ca" || pgConfig.sslmode === "verify-full";
+
+  const bucketFieldsComplete =
+    bucketConfig.endpoint.trim() !== "" &&
+    bucketConfig.region.trim() !== "" &&
+    bucketConfig.bucket.trim() !== "" &&
+    bucketConfig.accessKeyId.trim() !== "" &&
+    bucketSecret !== "";
 
   const pickCaCert = async () => {
     const selected = await open({
@@ -140,6 +218,22 @@ export function StorageSettings() {
       toast.error(err instanceof Error ? err.message : "No se pudo conectar");
     } finally {
       setTesting(false);
+    }
+  };
+
+  const testBucketConnection = async () => {
+    if (!bucketFieldsComplete) {
+      toast.error("Completa endpoint, región, bucket, access key y secret key del bucket");
+      return;
+    }
+    setBucketTesting(true);
+    try {
+      await invoke("bucket_test_connection", { config: bucketConfig, secret: bucketSecret });
+      toast.success("Conexión al bucket exitosa");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "No se pudo conectar al bucket");
+    } finally {
+      setBucketTesting(false);
     }
   };
 
@@ -176,11 +270,13 @@ export function StorageSettings() {
           password,
           caCertPath: needsCaCert ? caCertPath : null,
           migrateData: currentMode === "local" ? migrateData : false,
+          bucketConfig,
+          bucketSecret,
         });
       }
       if (summary) {
         toast.success(
-          `Datos migrados: ${summary.customers} clientes, ${summary.appointments} citas, ${summary.sales} ventas. Reiniciando...`
+          `Datos migrados: ${summary.customers} clientes, ${summary.appointments} citas, ${summary.sales} ventas, ${summary.imagesMigrated} imágenes. Reiniciando...`
         );
       } else {
         toast.success("Modo de almacenamiento actualizado. Reiniciando...");
@@ -199,7 +295,8 @@ export function StorageSettings() {
 
   if (loading) return null;
 
-  const canSave = selected === "local" || pgFieldsComplete;
+  const canSave =
+    selected === "local" || (pgFieldsComplete && bucketFieldsComplete);
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
@@ -241,6 +338,7 @@ export function StorageSettings() {
         </div>
 
         {selected === "postgres" && (
+          <>
           <div className="mt-5 space-y-4 rounded-2xl border border-border/60 p-4">
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-2">
@@ -366,6 +464,127 @@ export function StorageSettings() {
               {testing ? "Probando..." : "Probar conexión"}
             </Button>
           </div>
+
+          <div className="mt-4 space-y-4 rounded-2xl border border-border/60 p-4">
+            <div>
+              <h3 className="font-medium">Bucket de imágenes (obligatorio)</h3>
+              <p className="text-xs text-muted-foreground">
+                Las imágenes del catálogo se suben a este bucket S3-compatible
+                (AWS S3, Cloudflare R2, Backblaze B2, DigitalOcean Spaces,
+                MinIO u otro) en vez de quedar solo en este equipo —
+                obligatorio para usar una base de datos propia.
+              </p>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="bucket-provider">Proveedor</Label>
+                <select
+                  id="bucket-provider"
+                  value={bucketConfig.provider}
+                  onChange={(e) => {
+                    const provider = e.target.value as BucketProvider;
+                    const preset = PROVIDER_PRESETS[provider];
+                    setBucketConfig((c) => ({
+                      ...c,
+                      provider,
+                      region: c.region || preset.defaultRegion,
+                      pathStyle: preset.defaultPathStyle,
+                    }));
+                  }}
+                  className="flex h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+                >
+                  {Object.entries(PROVIDER_PRESETS).map(([value, preset]) => (
+                    <option key={value} value={value}>
+                      {preset.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="bucket-endpoint">Endpoint</Label>
+                <Input
+                  id="bucket-endpoint"
+                  placeholder={PROVIDER_PRESETS[bucketConfig.provider].endpointHint}
+                  value={bucketConfig.endpoint}
+                  onChange={(e) =>
+                    setBucketConfig((c) => ({ ...c, endpoint: e.target.value }))
+                  }
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="bucket-region">Región</Label>
+                <Input
+                  id="bucket-region"
+                  value={bucketConfig.region}
+                  onChange={(e) =>
+                    setBucketConfig((c) => ({ ...c, region: e.target.value }))
+                  }
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="bucket-name">Bucket</Label>
+                <Input
+                  id="bucket-name"
+                  value={bucketConfig.bucket}
+                  onChange={(e) =>
+                    setBucketConfig((c) => ({ ...c, bucket: e.target.value }))
+                  }
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="bucket-prefix">Prefijo (opcional)</Label>
+                <Input
+                  id="bucket-prefix"
+                  placeholder="catalogo"
+                  value={bucketConfig.prefix ?? ""}
+                  onChange={(e) =>
+                    setBucketConfig((c) => ({ ...c, prefix: e.target.value || null }))
+                  }
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="bucket-access-key">Access Key ID</Label>
+                <Input
+                  id="bucket-access-key"
+                  value={bucketConfig.accessKeyId}
+                  onChange={(e) =>
+                    setBucketConfig((c) => ({ ...c, accessKeyId: e.target.value }))
+                  }
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="bucket-secret">Secret Access Key</Label>
+                <Input
+                  id="bucket-secret"
+                  type="password"
+                  value={bucketSecret}
+                  onChange={(e) => setBucketSecret(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <label className="flex items-center gap-2 text-sm">
+              <Checkbox
+                checked={bucketConfig.pathStyle}
+                onCheckedChange={(checked) =>
+                  setBucketConfig((c) => ({ ...c, pathStyle: checked === true }))
+                }
+              />
+              Direccionamiento por path (necesario para MinIO y algunos
+              proveedores no-AWS)
+            </label>
+
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={bucketTesting || !bucketFieldsComplete}
+              onClick={() => void testBucketConnection()}
+            >
+              {bucketTesting ? "Probando..." : "Probar conexión"}
+            </Button>
+          </div>
+          </>
         )}
 
         <Button
@@ -402,7 +621,7 @@ export function StorageSettings() {
                   Migrar mis datos locales a esta base de datos
                   <span className="block text-xs text-muted-foreground">
                     {migrateData
-                      ? "Se copiarán tus clientes, empleados, servicios, citas, ventas y demás datos del negocio a esta base PostgreSQL (debe estar vacía)."
+                      ? "Se copiarán tus clientes, empleados, servicios, citas, ventas y demás datos del negocio a esta base PostgreSQL (debe estar vacía), junto con las imágenes de tu catálogo al bucket configurado arriba."
                       : "La base de datos PostgreSQL quedará vacía: tendrás que crear tu negocio y cargar tus datos desde cero."}
                   </span>
                 </span>

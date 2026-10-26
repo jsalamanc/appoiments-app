@@ -1,5 +1,6 @@
 pub mod app_db;
 pub mod auth;
+pub mod bucket_config;
 pub mod commands;
 pub mod db;
 pub mod error;
@@ -17,6 +18,14 @@ use state::AppState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // `reqwest` (usado por `util::bucket` para hablar con el bucket
+    // S3-compatible) necesita un `CryptoProvider` de `rustls` instalado a
+    // nivel de proceso antes de construir cualquier cliente. Se fija `ring`
+    // explícitamente (en vez de dejarlo implícito) para que sea el único
+    // proveedor activo en todo el proceso, consistente con el que ya usa
+    // `sqlx` para las conexiones TLS a PostgreSQL.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -120,6 +129,10 @@ pub fn run() {
             commands::storage::storage_test_connection,
             commands::storage::storage_switch_mode,
             commands::storage::storage_export_local_data,
+            commands::bucket::bucket_get_config,
+            commands::bucket::bucket_test_connection,
+            commands::bucket::resolve_photo_cache,
+            commands::bucket::discard_photo,
         ])
         .run(tauri::generate_context!())
         .expect("error al ejecutar la aplicación Tauri");

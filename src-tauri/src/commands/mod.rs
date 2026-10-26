@@ -1,5 +1,6 @@
 pub mod appointments;
 pub mod auth;
+pub mod bucket;
 pub mod business_profile;
 pub mod customers;
 pub mod employees;

@@ -20,6 +20,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import type { CatalogStatus } from "@/lib/catalog-status";
+import { withPhotoRollback } from "@/lib/photo-path";
 import { serviceSchema, type ServiceValues } from "@/lib/validations";
 import type { Service } from "@/types/database";
 
@@ -90,11 +91,13 @@ export function ServiceFormDialog({
 
       if (service) {
         let photoPath = basePhotoPath;
+        let freshPhotoPath: string | null = null;
         if (pendingPhoto) {
-          photoPath = await invoke<string>("import_service_photo", {
+          freshPhotoPath = await invoke<string>("import_service_photo", {
             serviceId: service.id,
             sourceFilePath: pendingPhoto,
           });
+          photoPath = freshPhotoPath;
         }
 
         const payload: ServiceInputPayload = {
@@ -105,7 +108,9 @@ export function ServiceFormDialog({
           photoPath,
           status: values.status,
         };
-        await invoke("update_service", { id: service.id, input: payload });
+        await withPhotoRollback(freshPhotoPath, () =>
+          invoke("update_service", { id: service.id, input: payload })
+        );
 
         toast.success(
           values.status === "published"
@@ -130,10 +135,12 @@ export function ServiceFormDialog({
             serviceId: created.id,
             sourceFilePath: pendingPhoto,
           });
-          await invoke("update_service", {
-            id: created.id,
-            input: { ...createPayload, photoPath },
-          });
+          await withPhotoRollback(photoPath, () =>
+            invoke("update_service", {
+              id: created.id,
+              input: { ...createPayload, photoPath },
+            })
+          );
         }
 
         toast.success(

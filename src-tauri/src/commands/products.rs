@@ -7,7 +7,7 @@ use crate::models::product::Product;
 use crate::repositories::products as repo;
 use crate::state::AppState;
 use crate::util::catalog::CatalogCounts;
-use crate::util::photos::import_photo;
+use crate::util::photos::{cleanup_old_photo, import_and_sync_photo};
 
 #[derive(Debug, Serialize)]
 pub struct ListProductsResult {
@@ -66,13 +66,28 @@ pub async fn create_product(
     }
 }
 
+/// Si la foto cambia (o se quita), la vieja se borra de disco/bucket después
+/// de que el `UPDATE` se confirma con éxito — nunca antes, para no dejar la
+/// fila apuntando a una foto que ya no existe si el `UPDATE` llegara a
+/// fallar (ver `cleanup_old_photo`).
 #[tauri::command]
 pub async fn update_product(
+    app: AppHandle,
     state: State<'_, AppState>,
     id: String,
     input: ProductInput,
 ) -> AppResult<Product> {
-    match &state.db {
+    let old_photo_path = match &state.db {
+        AppDb::Sqlite(_) => {
+            let id = id.clone();
+            state.db.with_sqlite(move |conn| repo::get(conn, id)).await?
+        }
+        AppDb::Postgres(pool) => repo::postgres::get(pool, id.clone()).await?,
+    }
+    .and_then(|p| p.photo_path);
+    let new_photo_path = input.photo_path.clone();
+
+    let updated = match &state.db {
         AppDb::Sqlite(_) => {
             state
                 .db
@@ -80,15 +95,43 @@ pub async fn update_product(
                 .await
         }
         AppDb::Postgres(pool) => repo::postgres::update(pool, id, input).await,
+    }?;
+
+    if old_photo_path.is_some() && old_photo_path != new_photo_path {
+        if let (Ok(data_dir), Ok(config_dir)) =
+            (app.path().app_data_dir(), app.path().app_config_dir())
+        {
+            cleanup_old_photo(&data_dir, &config_dir, &state.db, old_photo_path.as_deref()).await;
+        }
     }
+
+    Ok(updated)
 }
 
+/// Borra la foto de disco/bucket después de que la fila se borra con éxito
+/// (ver `cleanup_old_photo`) — issue #18, para no dejar imágenes huérfanas.
 #[tauri::command]
-pub async fn delete_product(state: State<'_, AppState>, id: String) -> AppResult<()> {
+pub async fn delete_product(app: AppHandle, state: State<'_, AppState>, id: String) -> AppResult<()> {
+    let old_photo_path = match &state.db {
+        AppDb::Sqlite(_) => {
+            let id = id.clone();
+            state.db.with_sqlite(move |conn| repo::get(conn, id)).await?
+        }
+        AppDb::Postgres(pool) => repo::postgres::get(pool, id.clone()).await?,
+    }
+    .and_then(|p| p.photo_path);
+
     match &state.db {
         AppDb::Sqlite(_) => state.db.with_sqlite(move |conn| repo::delete(conn, id)).await,
         AppDb::Postgres(pool) => repo::postgres::delete(pool, id).await,
+    }?;
+
+    if let (Ok(data_dir), Ok(config_dir)) = (app.path().app_data_dir(), app.path().app_config_dir())
+    {
+        cleanup_old_photo(&data_dir, &config_dir, &state.db, old_photo_path.as_deref()).await;
     }
+
+    Ok(())
 }
 
 /// Replica la función Postgres `set_product_stock`: tipo de movimiento
@@ -115,7 +158,8 @@ pub async fn set_product_stock(
 /// Copia la foto elegida por el usuario (file picker, ruta absoluta) al
 /// directorio de datos de la app y devuelve la ruta relativa a guardar en
 /// `photo_path` (el comando NO actualiza la fila; el frontend llama luego a
-/// `update_product` con el valor devuelto).
+/// `update_product` con el valor devuelto). En modo "Base de datos propia"
+/// también la sube al bucket configurado (ver `import_and_sync_photo`).
 #[tauri::command]
 pub async fn import_product_photo(
     app: AppHandle,
@@ -136,6 +180,9 @@ pub async fn import_product_photo(
     let data_dir = app.path().app_data_dir().map_err(|e| {
         AppError::Internal(format!("no se pudo resolver el directorio de datos: {e}"))
     })?;
+    let config_dir = app.path().app_config_dir().map_err(|e| {
+        AppError::Internal(format!("no se pudo resolver el directorio de configuración: {e}"))
+    })?;
 
-    import_photo(&data_dir, "products", &source_file_path)
+    import_and_sync_photo(&data_dir, &config_dir, &state.db, "products", &source_file_path).await
 }

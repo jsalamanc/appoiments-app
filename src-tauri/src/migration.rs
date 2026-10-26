@@ -19,6 +19,8 @@
 //! una copia directa de base a base, nunca un archivo que pueda leer un
 //! tercero.
 
+use std::path::Path;
+
 use rusqlite::{Connection, OptionalExtension};
 use serde::Serialize;
 use sqlx::PgPool;
@@ -32,6 +34,7 @@ use crate::models::package::{Package, PackageItem};
 use crate::models::product::Product;
 use crate::models::sale::{Sale, SaleItem};
 use crate::models::service::Service;
+use crate::util::bucket::BucketClient;
 
 struct BusinessProfileRow {
     name: String,
@@ -87,6 +90,8 @@ pub struct MigrationSummary {
     pub sales: usize,
     pub sale_items: usize,
     pub inventory_movements: usize,
+    /// Fotos de productos/servicios/paquetes subidas al bucket (issue #18).
+    pub images_migrated: usize,
 }
 
 fn read_business_profile(conn: &Connection) -> AppResult<Option<BusinessProfileRow>> {
@@ -455,16 +460,58 @@ pub async fn write_snapshot_to_postgres(
         sales: snapshot.sales.len(),
         sale_items: snapshot.sale_items.len(),
         inventory_movements: snapshot.inventory_movements.len(),
+        // Se completa en `migrate_local_to_postgres`, que es quien conoce el
+        // resultado de la subida de imágenes al bucket (ver `migrate_images`).
+        images_migrated: 0,
     })
 }
 
+/// Sube al bucket cada imagen de producto/servicio/paquete referenciada en el
+/// snapshot, usando la misma ruta relativa (`photo_path`) como key del
+/// objeto — ver la decisión de diseño en `crate::util::photos`. Se corre
+/// ANTES de abrir la transacción de Postgres: si alguna subida falla, la
+/// migración se aborta completa y no se inserta ninguna fila (mismo
+/// principio "todo o nada" que ya sigue `write_snapshot_to_postgres`).
+async fn migrate_images(
+    data_dir: &Path,
+    bucket_config: &crate::bucket_config::BucketConfig,
+    bucket: &BucketClient,
+    snapshot: &LocalSnapshot,
+) -> AppResult<usize> {
+    let paths = snapshot
+        .products
+        .iter()
+        .filter_map(|p| p.photo_path.as_deref())
+        .chain(snapshot.services.iter().filter_map(|s| s.photo_path.as_deref()))
+        .chain(snapshot.packages.iter().filter_map(|pk| pk.photo_path.as_deref()));
+
+    let mut count = 0;
+    for photo_path in paths {
+        let bytes = std::fs::read(data_dir.join(photo_path)).map_err(|e| {
+            AppError::validation(format!(
+                "no se pudo leer la imagen local \"{photo_path}\" para migrarla: {e}"
+            ))
+        })?;
+        bucket.put_object(&bucket_config.object_key(photo_path), bytes).await?;
+        count += 1;
+    }
+    Ok(count)
+}
+
 /// Punto de entrada usado por `storage_switch_mode`: lee de SQLite (vía
-/// `AppDb::with_sqlite`, en un hilo bloqueante) y escribe en Postgres en una
+/// `AppDb::with_sqlite`, en un hilo bloqueante), sube las imágenes del
+/// catálogo al bucket (issue #18) y escribe los datos en Postgres en una
 /// sola transacción.
 pub async fn migrate_local_to_postgres(
     db: &crate::app_db::AppDb,
     pg: &PgPool,
+    data_dir: &Path,
+    bucket_config: &crate::bucket_config::BucketConfig,
+    bucket: &BucketClient,
 ) -> AppResult<MigrationSummary> {
     let snapshot = db.with_sqlite(read_local_snapshot).await?;
-    write_snapshot_to_postgres(pg, snapshot).await
+    let images_migrated = migrate_images(data_dir, bucket_config, bucket, &snapshot).await?;
+    let mut summary = write_snapshot_to_postgres(pg, snapshot).await?;
+    summary.images_migrated = images_migrated;
+    Ok(summary)
 }
