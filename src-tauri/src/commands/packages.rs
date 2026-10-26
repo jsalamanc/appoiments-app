@@ -6,7 +6,7 @@ use crate::error::{AppError, AppResult};
 use crate::repositories::packages as repo;
 use crate::state::AppState;
 use crate::util::catalog::CatalogCounts;
-use crate::util::photos::import_and_sync_photo;
+use crate::util::photos::{cleanup_old_photo, import_and_sync_photo};
 
 #[derive(Debug, Serialize)]
 pub struct ProductRef {
@@ -124,13 +124,26 @@ pub async fn create_package(
     }
 }
 
+/// Ver `products::update_product`: la foto vieja se borra solo después de
+/// confirmar el `UPDATE`, y solo si de verdad cambió.
 #[tauri::command]
 pub async fn update_package(
+    app: AppHandle,
     state: State<'_, AppState>,
     id: String,
     input: PackageInput,
 ) -> AppResult<PackageWithItems> {
-    match &state.db {
+    let old_photo_path = match &state.db {
+        AppDb::Sqlite(_) => {
+            let id = id.clone();
+            state.db.with_sqlite(move |conn| repo::get(conn, id)).await?
+        }
+        AppDb::Postgres(pool) => repo::postgres::get(pool, id.clone()).await?,
+    }
+    .and_then(|p| p.photo_path);
+    let new_photo_path = input.photo_path.clone();
+
+    let updated = match &state.db {
         AppDb::Sqlite(_) => {
             state
                 .db
@@ -138,15 +151,43 @@ pub async fn update_package(
                 .await
         }
         AppDb::Postgres(pool) => repo::postgres::update(pool, id, input).await,
+    }?;
+
+    if old_photo_path.is_some() && old_photo_path != new_photo_path {
+        if let (Ok(data_dir), Ok(config_dir)) =
+            (app.path().app_data_dir(), app.path().app_config_dir())
+        {
+            cleanup_old_photo(&data_dir, &config_dir, &state.db, old_photo_path.as_deref()).await;
+        }
     }
+
+    Ok(updated)
 }
 
+/// Ver `products::delete_product`: la foto se borra de disco/bucket después
+/// de confirmar el `DELETE` (issue #18).
 #[tauri::command]
-pub async fn delete_package(state: State<'_, AppState>, id: String) -> AppResult<()> {
+pub async fn delete_package(app: AppHandle, state: State<'_, AppState>, id: String) -> AppResult<()> {
+    let old_photo_path = match &state.db {
+        AppDb::Sqlite(_) => {
+            let id = id.clone();
+            state.db.with_sqlite(move |conn| repo::get(conn, id)).await?
+        }
+        AppDb::Postgres(pool) => repo::postgres::get(pool, id.clone()).await?,
+    }
+    .and_then(|p| p.photo_path);
+
     match &state.db {
         AppDb::Sqlite(_) => state.db.with_sqlite(move |conn| repo::delete(conn, id)).await,
         AppDb::Postgres(pool) => repo::postgres::delete(pool, id).await,
+    }?;
+
+    if let (Ok(data_dir), Ok(config_dir)) = (app.path().app_data_dir(), app.path().app_config_dir())
+    {
+        cleanup_old_photo(&data_dir, &config_dir, &state.db, old_photo_path.as_deref()).await;
     }
+
+    Ok(())
 }
 
 #[tauri::command]

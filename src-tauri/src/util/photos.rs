@@ -76,3 +76,38 @@ pub async fn import_and_sync_photo(
 
     Ok(photo_path)
 }
+
+/// Borra `photo_path` del disco local y, en modo Postgres, también del
+/// bucket — pensada para llamarse después de que un producto/servicio/
+/// paquete se borró o reemplazó su foto, para no dejar imágenes huérfanas
+/// (issue #18).
+///
+/// Deliberadamente **best-effort**: el registro ya se borró/actualizó con
+/// éxito en la base de datos cuando esto se invoca, así que un fallo acá
+/// (archivo ya no existe, bucket momentáneamente inalcanzable, credencial
+/// vencida) no debe revertir ni bloquear esa operación — como mucho deja la
+/// misma clase de huérfano que ya existía antes de este cleanup, nunca algo
+/// peor. Por eso no devuelve `AppResult`: los llamadores no tienen nada
+/// razonable que hacer con un error de limpieza.
+pub async fn cleanup_old_photo(
+    data_dir: &Path,
+    config_dir: &Path,
+    db: &AppDb,
+    photo_path: Option<&str>,
+) {
+    let Some(photo_path) = photo_path else {
+        return;
+    };
+
+    let _ = std::fs::remove_file(data_dir.join(photo_path));
+
+    if matches!(db, AppDb::Postgres(_)) {
+        if let Some(cfg) = bucket_config::load_bucket(config_dir) {
+            if let Ok(secret) = bucket_config::get_bucket_secret(&cfg) {
+                if let Ok(client) = BucketClient::new(&cfg, &secret) {
+                    let _ = client.delete_object(&cfg.object_key(photo_path)).await;
+                }
+            }
+        }
+    }
+}
