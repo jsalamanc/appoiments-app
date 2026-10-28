@@ -794,3 +794,69 @@ pub mod postgres {
             .collect()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn open_test_db() -> Connection {
+        let mut conn = Connection::open_in_memory().unwrap();
+        crate::db::migrations().to_latest(&mut conn).unwrap();
+        conn
+    }
+
+    fn seed_fixtures(conn: &Connection) {
+        conn.execute(
+            "INSERT INTO employees (id, name, color, active) VALUES ('emp-1', 'Ana', '#fff', 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO customers (id, name, phone, email, document)
+             VALUES ('cust-1', 'Cliente', '3000000000', 'cliente@test.com', 'DOC-1')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO services (id, name, price, duration_minutes, status)
+             VALUES ('svc-1', 'Corte', 20.0, 60, 'published')",
+            [],
+        )
+        .unwrap();
+    }
+
+    fn appointment_input(starts_at: &str) -> AppointmentInput {
+        AppointmentInput {
+            employee_id: "emp-1".to_string(),
+            customer_id: "cust-1".to_string(),
+            service_id: "svc-1".to_string(),
+            starts_at: starts_at.to_string(),
+            notes: None,
+        }
+    }
+
+    /// El servicio dura 60 minutos; agendar una segunda cita que empieza a
+    /// mitad de la primera debe rechazarse por solapamiento con el mismo
+    /// empleado.
+    #[test]
+    fn create_rejects_overlapping_appointment_for_same_employee() {
+        let mut conn = open_test_db();
+        seed_fixtures(&conn);
+
+        create(&mut conn, appointment_input("2026-01-10T10:00:00Z")).unwrap();
+        let result = create(&mut conn, appointment_input("2026-01-10T10:30:00Z"));
+
+        assert!(result.is_err(), "debe rechazar una cita que se solapa con otra del mismo empleado");
+    }
+
+    #[test]
+    fn create_allows_back_to_back_appointments() {
+        let mut conn = open_test_db();
+        seed_fixtures(&conn);
+
+        create(&mut conn, appointment_input("2026-01-10T10:00:00Z")).unwrap();
+        let result = create(&mut conn, appointment_input("2026-01-10T11:00:00Z"));
+
+        assert!(result.is_ok(), "una cita que empieza justo cuando termina la anterior no debe solaparse");
+    }
+}
