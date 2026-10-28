@@ -15,6 +15,7 @@ pub async fn list_appointments_in_range(
     to: String,
     employee_id: Option<String>,
 ) -> AppResult<Vec<AppointmentWithDetails>> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => {
             state
@@ -41,6 +42,7 @@ pub async fn create_appointment(
     state: State<'_, AppState>,
     input: AppointmentInput,
 ) -> AppResult<Appointment> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => state.db.with_sqlite(move |conn| repo::create(conn, input)).await,
         AppDb::Postgres(pool) => repo::postgres::create(pool, input).await,
@@ -53,6 +55,7 @@ pub async fn update_appointment(
     id: String,
     input: AppointmentInput,
 ) -> AppResult<Appointment> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => {
             state
@@ -70,6 +73,7 @@ pub async fn set_appointment_status(
     appointment_id: String,
     status: String,
 ) -> AppResult<Appointment> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => {
             state
@@ -94,6 +98,7 @@ pub async fn complete_appointment_with_sale(
     appointment_id: String,
     sale_id: String,
 ) -> AppResult<()> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => {
             state
@@ -115,6 +120,7 @@ pub async fn complete_appointment_with_sale(
 pub async fn list_published_services_for_appointments(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<ServiceRef>> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => state.db.with_sqlite(repo::list_published_services).await,
         AppDb::Postgres(pool) => repo::postgres::list_published_services(pool).await,

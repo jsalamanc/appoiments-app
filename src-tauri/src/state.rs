@@ -26,17 +26,25 @@ impl AppState {
         }
     }
 
+    /// Exige que haya una sesión activa, de cualquier rol (`owner` o
+    /// `staff`). Es el chequeo mínimo que debería tener casi cualquier
+    /// comando operativo (catálogo, citas, clientes, ventas, inventario) —
+    /// hasta ahora la mayoría de esos comandos no verificaban nada en
+    /// absoluto (issue #2).
+    pub fn require_user(&self) -> AppResult<UserPublic> {
+        self.current_user
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or(AppError::Unauthorized)
+    }
+
     /// Exige que haya una sesión activa con rol `owner`. Usado por los
     /// comandos de Ajustes/Reportes, que en el frontend ya están ocultos
     /// para staff (OwnerGate + sidebar), pero que también deben rechazarse
     /// aquí para que la restricción sea real y no solo de interfaz.
     pub fn require_owner(&self) -> AppResult<UserPublic> {
-        let current = self
-            .current_user
-            .lock()
-            .unwrap()
-            .clone()
-            .ok_or(AppError::Unauthorized)?;
+        let current = self.require_user()?;
         if current.role != "owner" {
             return Err(AppError::Unauthorized);
         }

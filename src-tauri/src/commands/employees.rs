@@ -12,6 +12,7 @@ pub async fn list_employees(
     state: State<'_, AppState>,
     active_only: Option<bool>,
 ) -> AppResult<Vec<Employee>> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => {
             state
@@ -35,6 +36,7 @@ pub async fn create_employee(
     state: State<'_, AppState>,
     input: EmployeeInput,
 ) -> AppResult<Employee> {
+    state.require_owner()?;
     match &state.db {
         AppDb::Sqlite(_) => state.db.with_sqlite(move |conn| repo::create(conn, input)).await,
         AppDb::Postgres(pool) => repo::postgres::create(pool, input).await,
@@ -47,6 +49,7 @@ pub async fn update_employee(
     id: String,
     input: EmployeeInput,
 ) -> AppResult<Employee> {
+    state.require_owner()?;
     match &state.db {
         AppDb::Sqlite(_) => {
             state
@@ -68,6 +71,7 @@ pub async fn update_employee(
 /// vez de eliminar.
 #[tauri::command]
 pub async fn delete_employee(state: State<'_, AppState>, id: String) -> AppResult<()> {
+    state.require_owner()?;
     match &state.db {
         AppDb::Sqlite(_) => state.db.with_sqlite(move |conn| repo::delete(conn, id)).await,
         AppDb::Postgres(pool) => repo::postgres::delete(pool, id).await,

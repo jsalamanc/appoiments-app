@@ -27,6 +27,7 @@ pub async fn list_products(
     page: Option<i64>,
     page_size: Option<i64>,
 ) -> AppResult<ListProductsResult> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => {
             state
@@ -40,6 +41,7 @@ pub async fn list_products(
 
 #[tauri::command]
 pub async fn get_product(state: State<'_, AppState>, id: String) -> AppResult<Option<Product>> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => state.db.with_sqlite(move |conn| repo::get(conn, id)).await,
         AppDb::Postgres(pool) => repo::postgres::get(pool, id).await,
@@ -60,6 +62,7 @@ pub async fn create_product(
     state: State<'_, AppState>,
     input: ProductInput,
 ) -> AppResult<Product> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => state.db.with_sqlite(move |conn| repo::create(conn, input)).await,
         AppDb::Postgres(pool) => repo::postgres::create(pool, input).await,
@@ -77,6 +80,7 @@ pub async fn update_product(
     id: String,
     input: ProductInput,
 ) -> AppResult<Product> {
+    state.require_user()?;
     let old_photo_path = match &state.db {
         AppDb::Sqlite(_) => {
             let id = id.clone();
@@ -112,6 +116,7 @@ pub async fn update_product(
 /// (ver `cleanup_old_photo`) — issue #18, para no dejar imágenes huérfanas.
 #[tauri::command]
 pub async fn delete_product(app: AppHandle, state: State<'_, AppState>, id: String) -> AppResult<()> {
+    state.require_user()?;
     let old_photo_path = match &state.db {
         AppDb::Sqlite(_) => {
             let id = id.clone();
@@ -144,6 +149,7 @@ pub async fn set_product_stock(
     stock: i64,
     note: Option<String>,
 ) -> AppResult<i64> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => {
             state
@@ -167,6 +173,7 @@ pub async fn import_product_photo(
     product_id: String,
     source_file_path: String,
 ) -> AppResult<String> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => {
             state

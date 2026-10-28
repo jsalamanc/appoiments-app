@@ -24,6 +24,7 @@ pub async fn list_customers(
     page_size: Option<i64>,
     q: Option<String>,
 ) -> AppResult<ListCustomersResult> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => {
             state
@@ -120,6 +121,7 @@ pub async fn get_customer_detail(
     state: State<'_, AppState>,
     id: String,
 ) -> AppResult<Option<CustomerDetail>> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => state.db.with_sqlite(move |conn| repo::get_detail(conn, id)).await,
         AppDb::Postgres(pool) => repo::postgres::get_detail(pool, id).await,
@@ -139,6 +141,7 @@ pub async fn create_customer(
     state: State<'_, AppState>,
     input: CustomerInput,
 ) -> AppResult<Customer> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => state.db.with_sqlite(move |conn| repo::create(conn, input)).await,
         AppDb::Postgres(pool) => repo::postgres::create(pool, input).await,
@@ -151,6 +154,7 @@ pub async fn update_customer(
     id: String,
     input: CustomerInput,
 ) -> AppResult<Customer> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => {
             state
@@ -167,6 +171,7 @@ pub async fn find_customer_by_document(
     state: State<'_, AppState>,
     document: String,
 ) -> AppResult<Option<Customer>> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => {
             state
@@ -183,6 +188,7 @@ pub async fn find_customer_by_email(
     state: State<'_, AppState>,
     email: String,
 ) -> AppResult<Option<Customer>> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => {
             state
@@ -199,6 +205,7 @@ pub async fn find_customer_by_id(
     state: State<'_, AppState>,
     id: String,
 ) -> AppResult<Option<Customer>> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => state.db.with_sqlite(move |conn| repo::find_by_id(conn, id)).await,
         AppDb::Postgres(pool) => repo::postgres::find_by_id(pool, id).await,
