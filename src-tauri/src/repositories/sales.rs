@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::commands::sales::{
     CashDaySummary, ListSalesResult, PaymentBreakdown, PaymentPeriods, PublishedCatalog,
@@ -21,7 +21,6 @@ use crate::models::product::Product;
 use crate::models::sale::{CustomerRef, Sale, SaleItem, SaleWithDetails};
 use crate::models::service::Service;
 use crate::util::pagination::{get_range, get_total_pages, CATALOG_PAGE_SIZE};
-use crate::util::period::period_from;
 
 // ---------------------------------------------------------------------------
 // published_catalog (dominio catálogo/inventario — no tocar la lógica)
@@ -135,19 +134,7 @@ pub fn create_with_inventory(
         if item.quantity < 1 {
             return Err(AppError::validation("La cantidad debe ser al menos 1"));
         }
-        if item.unit_price < 0.0 {
-            return Err(AppError::validation(
-                "El precio unitario no puede ser negativo",
-            ));
-        }
     }
-
-    let total = round2(
-        items
-            .iter()
-            .map(|item| round2(item.unit_price * item.quantity as f64))
-            .sum::<f64>(),
-    );
 
     // Agrupa cantidades por producto distinto (solo ítems de tipo "product";
     // los productos dentro de un paquete no descuentan inventario, igual que
@@ -171,33 +158,58 @@ pub fn create_with_inventory(
         return Err(AppError::validation("El cliente no existe"));
     }
 
-    // Cada ítem referenciado debe estar publicado
+    // Cada ítem referenciado debe estar publicado — y de acá sale el
+    // nombre/precio REAL que se usa para la venta (issue #2: antes se
+    // confiaba ciegamente en `item.unit_price`/`item.name`, lo que manda el
+    // frontend, sin contrastarlo contra el catálogo).
+    let mut catalog: HashMap<(String, String), (String, f64)> = HashMap::new();
     for item in &items {
-        let published = match item.item_type.as_str() {
-            "product" => row_exists(
-                &tx,
-                "SELECT EXISTS(SELECT 1 FROM products WHERE id = ?1 AND status = 'published')",
-                &item.item_id,
-            )?,
-            "service" => row_exists(
-                &tx,
-                "SELECT EXISTS(SELECT 1 FROM services WHERE id = ?1 AND status = 'published')",
-                &item.item_id,
-            )?,
-            "package" => row_exists(
-                &tx,
-                "SELECT EXISTS(SELECT 1 FROM packages WHERE id = ?1 AND status = 'published')",
-                &item.item_id,
-            )?,
-            _ => false,
+        let key = (item.item_type.clone(), item.item_id.clone());
+        if catalog.contains_key(&key) {
+            continue;
+        }
+        let found: Option<(String, f64)> = match item.item_type.as_str() {
+            "product" => tx
+                .query_row(
+                    "SELECT name, price FROM products WHERE id = ?1 AND status = 'published'",
+                    params![item.item_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?,
+            "service" => tx
+                .query_row(
+                    "SELECT name, price FROM services WHERE id = ?1 AND status = 'published'",
+                    params![item.item_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?,
+            "package" => tx
+                .query_row(
+                    "SELECT name, price FROM packages WHERE id = ?1 AND status = 'published'",
+                    params![item.item_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?,
+            _ => None,
         };
-        if !published {
-            return Err(AppError::validation(format!(
+        let resolved = found.ok_or_else(|| {
+            AppError::validation(format!(
                 "\"{}\" ya no está disponible para la venta",
                 item.name
-            )));
-        }
+            ))
+        })?;
+        catalog.insert(key, resolved);
     }
+
+    let total = round2(
+        items
+            .iter()
+            .map(|item| {
+                let (_, price) = &catalog[&(item.item_type.clone(), item.item_id.clone())];
+                round2(price * item.quantity as f64)
+            })
+            .sum::<f64>(),
+    );
 
     // Verifica stock suficiente para cada producto distinto, leyendo el stock
     // actual dentro de esta misma transacción para que el chequeo y el
@@ -228,7 +240,8 @@ pub fn create_with_inventory(
     )?;
 
     for item in &items {
-        let line_total = round2(item.unit_price * item.quantity as f64);
+        let (name, unit_price) = &catalog[&(item.item_type.clone(), item.item_id.clone())];
+        let line_total = round2(unit_price * item.quantity as f64);
         let (product_id, service_id, package_id): (
             Option<&str>,
             Option<&str>,
@@ -252,8 +265,8 @@ pub fn create_with_inventory(
                 product_id,
                 service_id,
                 package_id,
-                item.name,
-                item.unit_price,
+                name,
+                unit_price,
                 item.quantity,
                 line_total,
                 now
@@ -347,9 +360,12 @@ pub fn list(
 // cash_day_summary
 // ---------------------------------------------------------------------------
 
-pub fn cash_day_summary(conn: &mut Connection) -> AppResult<CashDaySummary> {
-    let from = period_from("day");
-
+/// `from` es la medianoche local de "hoy", ya calculada por el frontend
+/// (`getPeriodRange` en `src/lib/sales.ts`, que usa el reloj/timezone del
+/// equipo) — el backend ya no calcula ningún límite de tiempo por su cuenta
+/// (issue #2: antes usaba `now - 24h`, una ventana móvil, no el día
+/// calendario).
+pub fn cash_day_summary(conn: &mut Connection, from: String) -> AppResult<CashDaySummary> {
     let mut stmt =
         conn.prepare("SELECT * FROM sales WHERE sold_at >= ?1 ORDER BY sold_at DESC")?;
     let sale_rows: Vec<Sale> = stmt
@@ -404,11 +420,14 @@ pub fn cash_day_summary(conn: &mut Connection) -> AppResult<CashDaySummary> {
 // revenue_metrics
 // ---------------------------------------------------------------------------
 
-pub fn revenue_metrics(conn: &mut Connection) -> AppResult<RevenueMetrics> {
-    let day_from = period_from("day");
-    let week_from = period_from("week");
-    let month_from = period_from("month");
-
+/// `day_from`/`week_from`/`month_from` ya vienen calculados por el frontend
+/// como medianoche local calendario (ver `cash_day_summary` arriba).
+pub fn revenue_metrics(
+    conn: &mut Connection,
+    day_from: String,
+    week_from: String,
+    month_from: String,
+) -> AppResult<RevenueMetrics> {
     let metrics = conn.query_row(
         "SELECT
             COALESCE(SUM(total), 0),
@@ -538,7 +557,6 @@ pub mod postgres {
     use crate::models::sale::{CustomerRef, Sale, SaleItem, SaleWithDetails};
     use crate::models::service::Service;
     use crate::util::pagination::{get_range, get_total_pages, CATALOG_PAGE_SIZE};
-    use crate::util::period::period_from;
 
     use super::round2;
 
@@ -604,16 +622,16 @@ pub mod postgres {
         rows.iter().map(SaleItem::from_pg_row).collect()
     }
 
-    /// `period_from` (compartida con SQLite) devuelve un `String` RFC3339;
-    /// acá se re-parsea a `OffsetDateTime` para comparar nativamente contra
+    /// El frontend manda el límite de tiempo ya calculado como string
+    /// RFC3339 (medianoche local calendario, ver `cash_day_summary` arriba);
+    /// acá se parsea a `OffsetDateTime` para comparar nativamente contra
     /// columnas `TIMESTAMPTZ`. Comparar como texto (`sold_at::text >= $1`)
     /// sería incorrecto: el formato de texto por defecto de Postgres para
     /// `timestamptz` no es RFC3339 (usa espacio en vez de `T`, `+00` en vez
     /// de `Z`), así que la comparación lexicográfica no sería equivalente a
     /// la comparación cronológica real.
-    fn parse_period(period: &str) -> AppResult<time::OffsetDateTime> {
-        let raw = period_from(period);
-        time::OffsetDateTime::parse(&raw, &time::format_description::well_known::Rfc3339)
+    fn parse_from(from: &str) -> AppResult<time::OffsetDateTime> {
+        time::OffsetDateTime::parse(from, &time::format_description::well_known::Rfc3339)
             .map_err(|e| AppError::Internal(e.to_string()))
     }
 
@@ -652,19 +670,7 @@ pub mod postgres {
             if item.quantity < 1 {
                 return Err(AppError::validation("La cantidad debe ser al menos 1"));
             }
-            if item.unit_price < 0.0 {
-                return Err(AppError::validation(
-                    "El precio unitario no puede ser negativo",
-                ));
-            }
         }
-
-        let total = round2(
-            items
-                .iter()
-                .map(|item| round2(item.unit_price * item.quantity as f64))
-                .sum::<f64>(),
-        );
 
         let mut product_qty: HashMap<String, i64> = HashMap::new();
         for item in &items {
@@ -685,41 +691,59 @@ pub mod postgres {
             return Err(AppError::validation("El cliente no existe"));
         }
 
+        // Cada ítem referenciado debe estar publicado — y de acá sale el
+        // nombre/precio REAL que se usa para la venta (issue #2: antes se
+        // confiaba en `item.unit_price`/`item.name` del frontend).
+        let mut catalog: HashMap<(String, String), (String, f64)> = HashMap::new();
         for item in &items {
-            let published = match item.item_type.as_str() {
+            let key = (item.item_type.clone(), item.item_id.clone());
+            if catalog.contains_key(&key) {
+                continue;
+            }
+            let row = match item.item_type.as_str() {
                 "product" => {
-                    row_exists(
-                        &mut *tx,
-                        "SELECT EXISTS(SELECT 1 FROM products WHERE id = $1 AND status = 'published')",
-                        &item.item_id,
-                    )
-                    .await?
+                    sqlx::query("SELECT name, price FROM products WHERE id = $1 AND status = 'published'")
+                        .bind(&item.item_id)
+                        .fetch_optional(&mut *tx)
+                        .await?
                 }
                 "service" => {
-                    row_exists(
-                        &mut *tx,
-                        "SELECT EXISTS(SELECT 1 FROM services WHERE id = $1 AND status = 'published')",
-                        &item.item_id,
-                    )
-                    .await?
+                    sqlx::query("SELECT name, price FROM services WHERE id = $1 AND status = 'published'")
+                        .bind(&item.item_id)
+                        .fetch_optional(&mut *tx)
+                        .await?
                 }
                 "package" => {
-                    row_exists(
-                        &mut *tx,
-                        "SELECT EXISTS(SELECT 1 FROM packages WHERE id = $1 AND status = 'published')",
-                        &item.item_id,
-                    )
-                    .await?
+                    sqlx::query("SELECT name, price FROM packages WHERE id = $1 AND status = 'published'")
+                        .bind(&item.item_id)
+                        .fetch_optional(&mut *tx)
+                        .await?
                 }
-                _ => false,
+                _ => None,
             };
-            if !published {
-                return Err(AppError::validation(format!(
+            let found = row
+                .map(|row| -> AppResult<(String, f64)> {
+                    Ok((row.try_get("name")?, row.try_get("price")?))
+                })
+                .transpose()?;
+            let resolved = found.ok_or_else(|| {
+                AppError::validation(format!(
                     "\"{}\" ya no está disponible para la venta",
                     item.name
-                )));
-            }
+                ))
+            })?;
+            catalog.insert(key, resolved);
         }
+
+        let total = round2(
+            items
+                .iter()
+                .map(|item| {
+                    let (_, price) = &catalog[&(item.item_type.clone(), item.item_id.clone())];
+                    round2(price * item.quantity as f64)
+                })
+                .sum::<f64>(),
+        );
 
         for (product_id, needed) in product_qty.iter() {
             let row = sqlx::query("SELECT name, stock FROM products WHERE id = $1")
@@ -750,7 +774,8 @@ pub mod postgres {
         .await?;
 
         for item in &items {
-            let line_total = round2(item.unit_price * item.quantity as f64);
+            let (name, unit_price) = &catalog[&(item.item_type.clone(), item.item_id.clone())];
+            let line_total = round2(unit_price * item.quantity as f64);
             let (product_id, service_id, package_id): (Option<&str>, Option<&str>, Option<&str>) =
                 match item.item_type.as_str() {
                     "product" => (Some(item.item_id.as_str()), None, None),
@@ -771,8 +796,8 @@ pub mod postgres {
             .bind(product_id)
             .bind(service_id)
             .bind(package_id)
-            .bind(&item.name)
-            .bind(item.unit_price)
+            .bind(name)
+            .bind(unit_price)
             .bind(item.quantity)
             .bind(line_total)
             .execute(&mut *tx)
@@ -870,9 +895,8 @@ pub mod postgres {
         })
     }
 
-    pub async fn cash_day_summary(pool: &PgPool) -> AppResult<CashDaySummary> {
-        let from = period_from("day");
-        let from_dt = parse_period("day")?;
+    pub async fn cash_day_summary(pool: &PgPool, from: String) -> AppResult<CashDaySummary> {
+        let from_dt = parse_from(&from)?;
 
         let sale_rows = sqlx::query("SELECT * FROM sales WHERE sold_at >= $1 ORDER BY sold_at DESC")
             .bind(from_dt)
@@ -921,10 +945,15 @@ pub mod postgres {
         })
     }
 
-    pub async fn revenue_metrics(pool: &PgPool) -> AppResult<RevenueMetrics> {
-        let day_from = parse_period("day")?;
-        let week_from = parse_period("week")?;
-        let month_from = parse_period("month")?;
+    pub async fn revenue_metrics(
+        pool: &PgPool,
+        day_from: String,
+        week_from: String,
+        month_from: String,
+    ) -> AppResult<RevenueMetrics> {
+        let day_from = parse_from(&day_from)?;
+        let week_from = parse_from(&week_from)?;
+        let month_from = parse_from(&month_from)?;
 
         let row = sqlx::query(
             "SELECT
@@ -1032,5 +1061,106 @@ pub mod postgres {
 
         tx.commit().await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn open_test_db() -> Connection {
+        let mut conn = Connection::open_in_memory().unwrap();
+        crate::db::migrations().to_latest(&mut conn).unwrap();
+        conn
+    }
+
+    fn insert_customer(conn: &Connection, id: &str) {
+        conn.execute(
+            "INSERT INTO customers (id, name, phone, email, document)
+             VALUES (?1, 'Cliente de prueba', '3000000000', 'cliente@test.com', 'DOC-1')",
+            params![id],
+        )
+        .unwrap();
+    }
+
+    fn insert_published_product(conn: &Connection, id: &str, name: &str, price: f64, stock: i64) {
+        conn.execute(
+            "INSERT INTO products (id, name, price, status, stock)
+             VALUES (?1, ?2, ?3, 'published', ?4)",
+            params![id, name, price, stock],
+        )
+        .unwrap();
+    }
+
+    /// Issue #2: `create_with_inventory` no debe confiar en el
+    /// `unit_price`/`name` que manda el frontend — debe recalcularlos desde
+    /// `products`/`services`/`packages`, para que manipular esos campos (ej.
+    /// desde las devtools) no cambie el monto real cobrado.
+    #[test]
+    fn create_with_inventory_ignores_client_supplied_price() {
+        let mut conn = open_test_db();
+        insert_customer(&conn, "cust-1");
+        insert_published_product(&conn, "prod-1", "Shampoo real", 50.0, 10);
+
+        let sale_id = create_with_inventory(
+            &mut conn,
+            "cust-1".to_string(),
+            "cash".to_string(),
+            vec![SaleItemInput {
+                item_type: "product".to_string(),
+                item_id: "prod-1".to_string(),
+                name: "Nombre falso".to_string(),
+                unit_price: 1.0,
+                quantity: 2,
+            }],
+        )
+        .unwrap();
+
+        let total: f64 = conn
+            .query_row("SELECT total FROM sales WHERE id = ?1", params![sale_id], |r| r.get(0))
+            .unwrap();
+        assert_eq!(total, 100.0, "debe usar el precio real (50.0 x 2), no el manipulado (1.0 x 2)");
+
+        let (name, unit_price): (String, f64) = conn
+            .query_row(
+                "SELECT name_snapshot, unit_price FROM sale_items WHERE sale_id = ?1",
+                params![sale_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(name, "Shampoo real");
+        assert_eq!(unit_price, 50.0);
+
+        let stock: i64 = conn
+            .query_row("SELECT stock FROM products WHERE id = 'prod-1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(stock, 8, "el stock debe descontarse por la cantidad vendida");
+    }
+
+    #[test]
+    fn create_with_inventory_rejects_unpublished_item() {
+        let mut conn = open_test_db();
+        insert_customer(&conn, "cust-1");
+        conn.execute(
+            "INSERT INTO products (id, name, price, status, stock)
+             VALUES ('prod-draft', 'Borrador', 10.0, 'draft', 5)",
+            [],
+        )
+        .unwrap();
+
+        let result = create_with_inventory(
+            &mut conn,
+            "cust-1".to_string(),
+            "cash".to_string(),
+            vec![SaleItemInput {
+                item_type: "product".to_string(),
+                item_id: "prod-draft".to_string(),
+                name: "Borrador".to_string(),
+                unit_price: 10.0,
+                quantity: 1,
+            }],
+        );
+
+        assert!(result.is_err(), "no debe poder vender un producto en borrador");
     }
 }

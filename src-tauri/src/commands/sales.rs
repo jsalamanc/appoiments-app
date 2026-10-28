@@ -32,6 +32,7 @@ pub struct PublishedCatalog {
 
 #[tauri::command]
 pub async fn get_published_catalog(state: State<'_, AppState>) -> AppResult<PublishedCatalog> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => state.db.with_sqlite(repo::published_catalog).await,
         AppDb::Postgres(pool) => repo::postgres::published_catalog(pool).await,
@@ -58,6 +59,7 @@ pub async fn create_sale_with_inventory(
     payment_method: String,
     items: Vec<SaleItemInput>,
 ) -> AppResult<String> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => {
             state
@@ -94,6 +96,7 @@ pub async fn list_sales(
     page_size: Option<i64>,
     payment_method: Option<String>,
 ) -> AppResult<ListSalesResult> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => {
             state
@@ -126,11 +129,17 @@ pub struct CashDaySummary {
     pub from: String,
 }
 
+/// `from` es la medianoche local de "hoy" ya calculada por el frontend
+/// (`getPeriodRange("day")` en `src/lib/sales.ts`) — ver el comentario de
+/// `repositories::sales::cash_day_summary` para el porqué (issue #2: antes
+/// se calculaba en el backend como `now - 24h`, una ventana móvil en UTC,
+/// no el día calendario en la hora local del negocio).
 #[tauri::command]
-pub async fn get_cash_day_summary(state: State<'_, AppState>) -> AppResult<CashDaySummary> {
+pub async fn get_cash_day_summary(state: State<'_, AppState>, from: String) -> AppResult<CashDaySummary> {
+    state.require_user()?;
     match &state.db {
-        AppDb::Sqlite(_) => state.db.with_sqlite(repo::cash_day_summary).await,
-        AppDb::Postgres(pool) => repo::postgres::cash_day_summary(pool).await,
+        AppDb::Sqlite(_) => state.db.with_sqlite(move |conn| repo::cash_day_summary(conn, from)).await,
+        AppDb::Postgres(pool) => repo::postgres::cash_day_summary(pool, from).await,
     }
 }
 
@@ -156,11 +165,26 @@ pub struct RevenueMetrics {
     pub payments: PaymentPeriods,
 }
 
+/// Muestra ingresos totales del negocio — a diferencia de `get_cash_day_summary`
+/// (operativo, lo necesita quien cierra caja), esto es información financiera
+/// agregada y queda solo para el dueño (issue #2: antes cualquiera podía
+/// llamarlo sin sesión).
 #[tauri::command]
-pub async fn get_revenue_metrics(state: State<'_, AppState>) -> AppResult<RevenueMetrics> {
+pub async fn get_revenue_metrics(
+    state: State<'_, AppState>,
+    day_from: String,
+    week_from: String,
+    month_from: String,
+) -> AppResult<RevenueMetrics> {
+    state.require_owner()?;
     match &state.db {
-        AppDb::Sqlite(_) => state.db.with_sqlite(repo::revenue_metrics).await,
-        AppDb::Postgres(pool) => repo::postgres::revenue_metrics(pool).await,
+        AppDb::Sqlite(_) => {
+            state
+                .db
+                .with_sqlite(move |conn| repo::revenue_metrics(conn, day_from, week_from, month_from))
+                .await
+        }
+        AppDb::Postgres(pool) => repo::postgres::revenue_metrics(pool, day_from, week_from, month_from).await,
     }
 }
 
@@ -174,6 +198,7 @@ pub async fn link_sale_to_appointment(
     sale_id: String,
     appointment_id: String,
 ) -> AppResult<()> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => {
             state

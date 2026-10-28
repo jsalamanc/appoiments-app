@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 
 import { CashDay } from "@/components/admin/cash-day";
+import { getPeriodRange } from "@/lib/sales";
 import type { SaleWithDetails } from "@/types/database";
 
 type PaymentBreakdown = {
@@ -26,7 +27,8 @@ export default function CashDayPage() {
 
   useEffect(() => {
     let cancelled = false;
-    invoke<CashDaySummary>("get_cash_day_summary").then((r) => {
+    const { from } = getPeriodRange("day");
+    invoke<CashDaySummary>("get_cash_day_summary", { from }).then((r) => {
       if (!cancelled) setSummary(r);
     });
     return () => {

@@ -43,16 +43,17 @@ pub struct EmployeePerformanceReport {
 pub async fn get_employee_performance_report(
     state: State<'_, AppState>,
     period: String,
+    from: String,
 ) -> AppResult<EmployeePerformanceReport> {
     state.require_owner()?;
     match &state.db {
         AppDb::Sqlite(_) => {
             state
                 .db
-                .with_sqlite(move |conn| repo::employee_performance(conn, period))
+                .with_sqlite(move |conn| repo::employee_performance(conn, period, from))
                 .await
         }
-        AppDb::Postgres(pool) => repo::postgres::employee_performance(pool, period).await,
+        AppDb::Postgres(pool) => repo::postgres::employee_performance(pool, period, from).await,
     }
 }
 
@@ -98,16 +99,17 @@ pub struct TopServicesReport {
 pub async fn get_top_services_report(
     state: State<'_, AppState>,
     period: String,
+    from: String,
 ) -> AppResult<TopServicesReport> {
     state.require_owner()?;
     match &state.db {
         AppDb::Sqlite(_) => {
             state
                 .db
-                .with_sqlite(move |conn| repo::top_services(conn, period))
+                .with_sqlite(move |conn| repo::top_services(conn, period, from))
                 .await
         }
-        AppDb::Postgres(pool) => repo::postgres::top_services(pool, period).await,
+        AppDb::Postgres(pool) => repo::postgres::top_services(pool, period, from).await,
     }
 }
 
@@ -173,15 +175,16 @@ pub struct NoShowsReport {
 pub async fn get_no_shows_report(
     state: State<'_, AppState>,
     period: String,
+    from: String,
 ) -> AppResult<NoShowsReport> {
     state.require_owner()?;
     match &state.db {
         AppDb::Sqlite(_) => {
             state
                 .db
-                .with_sqlite(move |conn| repo::no_shows(conn, period))
+                .with_sqlite(move |conn| repo::no_shows(conn, period, from))
                 .await
         }
-        AppDb::Postgres(pool) => repo::postgres::no_shows(pool, period).await,
+        AppDb::Postgres(pool) => repo::postgres::no_shows(pool, period, from).await,
     }
 }

@@ -27,19 +27,22 @@ type NoShowsReport = {
 
 export default function ReportsNoShowsPage() {
   const searchParams = useSearchParams();
-  const { period } = getReportPeriod(searchParams.get("period") ?? undefined);
+  const { period, range } = getReportPeriod(searchParams.get("period") ?? undefined);
 
   const [data, setData] = useState<NoShowsReport | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    invoke<NoShowsReport>("get_no_shows_report", { period }).then((r) => {
+    invoke<NoShowsReport>("get_no_shows_report", {
+      period,
+      from: range.from,
+    }).then((r) => {
       if (!cancelled) setData(r);
     });
     return () => {
       cancelled = true;
     };
-  }, [period]);
+  }, [period, range.from]);
 
   if (!data) return null;
 

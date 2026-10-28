@@ -17,7 +17,7 @@ type EmployeePerformanceReport = {
 
 export default function ReportsEmployeesPage() {
   const searchParams = useSearchParams();
-  const { period } = getReportPeriod(searchParams.get("period") ?? undefined);
+  const { period, range } = getReportPeriod(searchParams.get("period") ?? undefined);
 
   const [data, setData] = useState<EmployeePerformanceReport | null>(null);
 
@@ -25,13 +25,14 @@ export default function ReportsEmployeesPage() {
     let cancelled = false;
     invoke<EmployeePerformanceReport>("get_employee_performance_report", {
       period,
+      from: range.from,
     }).then((r) => {
       if (!cancelled) setData(r);
     });
     return () => {
       cancelled = true;
     };
-  }, [period]);
+  }, [period, range.from]);
 
   if (!data) return null;
 

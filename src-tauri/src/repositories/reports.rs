@@ -5,7 +5,6 @@ use crate::commands::reports::{
     RecentCustomerRef, RecentNoShowRow, TopServiceRow, TopServicesReport,
 };
 use crate::error::AppResult;
-use crate::util::period::period_from;
 
 /// Puerto de `getEmployeePerformance` (src/lib/reports-server.ts).
 ///
@@ -14,12 +13,13 @@ use crate::util::period::period_from;
 /// `EmployeePerformanceRow`), así que esta consulta tampoco filtra —
 /// replica el comportamiento real observado, no la descripción informal
 /// de "solo empleados activos".
+/// `from` ya viene calculado por el frontend (medianoche local calendario
+/// del período pedido, ver `repositories::sales::cash_day_summary`).
 pub fn employee_performance(
     conn: &mut Connection,
     period: String,
+    from: String,
 ) -> AppResult<EmployeePerformanceReport> {
-    let from = period_from(&period);
-
     let mut stmt = conn.prepare(
         "SELECT
             e.id AS employee_id,
@@ -72,9 +72,11 @@ pub fn employee_performance(
 /// retorno de Postgres (no determinista). Aquí se usa `MIN(name_snapshot)`
 /// para un resultado determinista; la agrupación/cantidad/ingresos son
 /// idénticos.
-pub fn top_services(conn: &mut Connection, period: String) -> AppResult<TopServicesReport> {
-    let from = period_from(&period);
-
+pub fn top_services(
+    conn: &mut Connection,
+    period: String,
+    from: String,
+) -> AppResult<TopServicesReport> {
     let (sales_count, total_revenue): (i64, f64) = conn.query_row(
         "SELECT COUNT(*), COALESCE(SUM(total), 0.0) FROM sales WHERE sold_at >= ?1",
         params![from],
@@ -132,9 +134,11 @@ pub fn top_services(conn: &mut Connection, period: String) -> AppResult<TopServi
 /// vía RLS/Postgrest) aquí el `JOIN` con `customers` siempre encuentra
 /// fila — `customers` en la respuesta es `Option` solo para igualar el
 /// tipo del frontend, pero siempre viene `Some`.
-pub fn no_shows(conn: &mut Connection, period: String) -> AppResult<NoShowsReport> {
-    let from = period_from(&period);
-
+pub fn no_shows(
+    conn: &mut Connection,
+    period: String,
+    from: String,
+) -> AppResult<NoShowsReport> {
     let (no_show_total, cancelled_total): (i64, i64) = conn.query_row(
         "SELECT
             COUNT(CASE WHEN status = 'no_show' THEN 1 END),
@@ -219,9 +223,9 @@ pub fn no_shows(conn: &mut Connection, period: String) -> AppResult<NoShowsRepor
 /// que arriba, adaptada al driver async `sqlx`.
 ///
 /// IMPORTANTE: `starts_at`/`sold_at` son `TIMESTAMPTZ` en Postgres (no texto
-/// como en SQLite), así que comparar contra la cadena RFC3339 de
-/// `period_from` requiere parsearla primero a `time::OffsetDateTime` y
-/// bindearla nativamente — nunca castear la columna a texto
+/// como en SQLite), así que comparar contra la cadena RFC3339 que manda el
+/// frontend como `from` requiere parsearla primero a `time::OffsetDateTime`
+/// y bindearla nativamente — nunca castear la columna a texto
 /// (`col::text >= $1`), porque la representación textual por defecto de
 /// Postgres para `timestamptz` ("2024-01-15 10:30:00+00") no es RFC3339 y una
 /// comparación lexicográfica contra ella no es confiablemente equivalente a
@@ -236,17 +240,17 @@ pub mod postgres {
     use crate::db::format_pg_timestamp;
     use crate::error::{AppError, AppResult};
 
-    fn parse_period(period: &str) -> AppResult<time::OffsetDateTime> {
-        let raw = crate::util::period::period_from(period);
-        time::OffsetDateTime::parse(&raw, &time::format_description::well_known::Rfc3339)
+    fn parse_from(from: &str) -> AppResult<time::OffsetDateTime> {
+        time::OffsetDateTime::parse(from, &time::format_description::well_known::Rfc3339)
             .map_err(|e| AppError::Internal(e.to_string()))
     }
 
     pub async fn employee_performance(
         pool: &PgPool,
         period: String,
+        from: String,
     ) -> AppResult<EmployeePerformanceReport> {
-        let from = parse_period(&period)?;
+        let from = parse_from(&from)?;
 
         let rows = sqlx::query(
             "SELECT
@@ -294,8 +298,12 @@ pub mod postgres {
         })
     }
 
-    pub async fn top_services(pool: &PgPool, period: String) -> AppResult<TopServicesReport> {
-        let from = parse_period(&period)?;
+    pub async fn top_services(
+        pool: &PgPool,
+        period: String,
+        from: String,
+    ) -> AppResult<TopServicesReport> {
+        let from = parse_from(&from)?;
 
         let totals_row = sqlx::query(
             "SELECT COUNT(*) AS sales_count, COALESCE(SUM(total), 0.0) AS total_revenue
@@ -357,8 +365,12 @@ pub mod postgres {
         })
     }
 
-    pub async fn no_shows(pool: &PgPool, period: String) -> AppResult<NoShowsReport> {
-        let from = parse_period(&period)?;
+    pub async fn no_shows(
+        pool: &PgPool,
+        period: String,
+        from: String,
+    ) -> AppResult<NoShowsReport> {
+        let from = parse_from(&from)?;
 
         let totals_row = sqlx::query(
             "SELECT
