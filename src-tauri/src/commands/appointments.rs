@@ -27,6 +27,16 @@ pub async fn list_appointments_in_range(
     }
 }
 
+/// `local_weekday`/`local_start_minutes` describen `starts_at` en la hora
+/// LOCAL de quien agenda (domingo=0..sábado=6, minutos desde medianoche) —
+/// el frontend ya tiene un `Date` en hora local antes de convertir
+/// `starts_at` a UTC para enviarlo (ver `appointment-form-dialog.tsx`), así
+/// que se manda ya resuelto en vez de reimplementar el cálculo de huso
+/// horario en Rust (mismo criterio que la Fase 1 con `period_from`: el
+/// backend no debe adivinar la zona horaria del proceso). El backend asume
+/// que una cita no cruza la medianoche local para derivar la hora de fin a
+/// partir de `local_start_minutes + duration_minutes`, sin volver a
+/// convertir `ends_at` (ver `repositories::appointments::create`).
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppointmentInput {
@@ -35,6 +45,8 @@ pub struct AppointmentInput {
     pub service_id: String,
     pub starts_at: String,
     pub notes: Option<String>,
+    pub local_weekday: i64,
+    pub local_start_minutes: i64,
 }
 
 #[tauri::command]

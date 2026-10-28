@@ -185,6 +185,13 @@ pub fn create(conn: &mut Connection, input: AppointmentInput) -> AppResult<Appoi
     assert_customer_exists(&tx, &input.customer_id)?;
     let service = load_published_service(&tx, &input.service_id)?;
     let ends_at = compute_ends_at(&input.starts_at, service.duration_minutes)?;
+    crate::repositories::business_hours::assert_appointment_within_schedule(
+        &tx,
+        &input.employee_id,
+        input.local_weekday,
+        input.local_start_minutes,
+        input.local_start_minutes + service.duration_minutes,
+    )?;
 
     if appointment_has_overlap(&tx, &input.employee_id, &input.starts_at, &ends_at, None)? {
         return Err(AppError::validation(
@@ -250,6 +257,13 @@ pub fn update(conn: &mut Connection, id: String, input: AppointmentInput) -> App
     assert_customer_exists(&tx, &input.customer_id)?;
     let service = load_published_service(&tx, &input.service_id)?;
     let ends_at = compute_ends_at(&input.starts_at, service.duration_minutes)?;
+    crate::repositories::business_hours::assert_appointment_within_schedule(
+        &tx,
+        &input.employee_id,
+        input.local_weekday,
+        input.local_start_minutes,
+        input.local_start_minutes + service.duration_minutes,
+    )?;
 
     if appointment_has_overlap(
         &tx,
@@ -607,6 +621,15 @@ pub mod postgres {
         let starts_at_dt = parse_rfc3339(&input.starts_at)?;
         let ends_at_dt = parse_rfc3339(&ends_at_str)?;
 
+        crate::repositories::business_hours::postgres::assert_appointment_within_schedule(
+            &mut tx,
+            &input.employee_id,
+            input.local_weekday,
+            input.local_start_minutes,
+            input.local_start_minutes + service.duration_minutes,
+        )
+        .await?;
+
         if appointment_has_overlap(&mut *tx, &input.employee_id, starts_at_dt, ends_at_dt, None)
             .await?
         {
@@ -672,6 +695,15 @@ pub mod postgres {
 
         let starts_at_dt = parse_rfc3339(&input.starts_at)?;
         let ends_at_dt = parse_rfc3339(&ends_at_str)?;
+
+        crate::repositories::business_hours::postgres::assert_appointment_within_schedule(
+            &mut tx,
+            &input.employee_id,
+            input.local_weekday,
+            input.local_start_minutes,
+            input.local_start_minutes + service.duration_minutes,
+        )
+        .await?;
 
         if appointment_has_overlap(
             &mut *tx,
@@ -825,13 +857,20 @@ mod tests {
         .unwrap();
     }
 
-    fn appointment_input(starts_at: &str) -> AppointmentInput {
+    /// 2026-01-10 es sábado (weekday 6 en la convención de `Date.getDay()`),
+    /// dentro del horario de negocio sembrado por la migración (sáb.
+    /// 09:00-17:00) — los tests tratan la hora UTC del literal como si ya
+    /// fuera la hora local, igual que haría el frontend real al mandar
+    /// `local_weekday`/`local_start_minutes` ya resueltos.
+    fn appointment_input(starts_at: &str, local_start_minutes: i64) -> AppointmentInput {
         AppointmentInput {
             employee_id: "emp-1".to_string(),
             customer_id: "cust-1".to_string(),
             service_id: "svc-1".to_string(),
             starts_at: starts_at.to_string(),
             notes: None,
+            local_weekday: 6,
+            local_start_minutes,
         }
     }
 
@@ -843,8 +882,8 @@ mod tests {
         let mut conn = open_test_db();
         seed_fixtures(&conn);
 
-        create(&mut conn, appointment_input("2026-01-10T10:00:00Z")).unwrap();
-        let result = create(&mut conn, appointment_input("2026-01-10T10:30:00Z"));
+        create(&mut conn, appointment_input("2026-01-10T10:00:00Z", 10 * 60)).unwrap();
+        let result = create(&mut conn, appointment_input("2026-01-10T10:30:00Z", 10 * 60 + 30));
 
         assert!(result.is_err(), "debe rechazar una cita que se solapa con otra del mismo empleado");
     }
@@ -854,9 +893,78 @@ mod tests {
         let mut conn = open_test_db();
         seed_fixtures(&conn);
 
-        create(&mut conn, appointment_input("2026-01-10T10:00:00Z")).unwrap();
-        let result = create(&mut conn, appointment_input("2026-01-10T11:00:00Z"));
+        create(&mut conn, appointment_input("2026-01-10T10:00:00Z", 10 * 60)).unwrap();
+        let result = create(&mut conn, appointment_input("2026-01-10T11:00:00Z", 11 * 60));
 
         assert!(result.is_ok(), "una cita que empieza justo cuando termina la anterior no debe solaparse");
+    }
+
+    /// Issue #2, Fase 3: la migración siembra el domingo (weekday 0) como
+    /// cerrado — no debería poder agendarse una cita ese día sin una
+    /// excepción explícita del empleado.
+    #[test]
+    fn create_rejects_appointment_when_business_is_closed() {
+        let mut conn = open_test_db();
+        seed_fixtures(&conn);
+
+        let mut input = appointment_input("2026-01-11T10:00:00Z", 10 * 60);
+        input.local_weekday = 0; // domingo
+
+        let result = create(&mut conn, input);
+
+        assert!(result.is_err(), "no debe poder agendar un domingo si el negocio está cerrado");
+    }
+
+    /// El sábado abre 09:00-17:00 (sembrado por la migración) — una cita que
+    /// terminaría después del cierre debe rechazarse.
+    #[test]
+    fn create_rejects_appointment_outside_business_hours() {
+        let mut conn = open_test_db();
+        seed_fixtures(&conn);
+
+        let result = create(&mut conn, appointment_input("2026-01-10T18:00:00Z", 18 * 60));
+
+        assert!(result.is_err(), "18:00-19:00 cae fuera del horario de cierre (17:00)");
+    }
+
+    /// Una excepción de disponibilidad del empleado reemplaza el horario de
+    /// negocio ese día: si el negocio está cerrado un domingo pero el
+    /// empleado tiene una excepción habilitándolo, la cita sí debe poder
+    /// agendarse dentro de esa ventana propia.
+    #[test]
+    fn create_allows_appointment_within_employee_override_on_closed_business_day() {
+        let mut conn = open_test_db();
+        seed_fixtures(&conn);
+        conn.execute(
+            "INSERT INTO employee_availability (id, employee_id, weekday, is_available, starts_at, ends_at)
+             VALUES ('avail-1', 'emp-1', 0, 1, '10:00', '14:00')",
+            [],
+        )
+        .unwrap();
+
+        let mut input = appointment_input("2026-01-11T10:00:00Z", 10 * 60);
+        input.local_weekday = 0;
+
+        let result = create(&mut conn, input);
+
+        assert!(result.is_ok(), "la excepción del empleado debe habilitar el domingo aunque el negocio esté cerrado");
+    }
+
+    /// Una excepción con `is_available = 0` bloquea al empleado ese día
+    /// aunque el negocio esté abierto.
+    #[test]
+    fn create_rejects_appointment_when_employee_marked_unavailable() {
+        let mut conn = open_test_db();
+        seed_fixtures(&conn);
+        conn.execute(
+            "INSERT INTO employee_availability (id, employee_id, weekday, is_available)
+             VALUES ('avail-1', 'emp-1', 6, 0)",
+            [],
+        )
+        .unwrap();
+
+        let result = create(&mut conn, appointment_input("2026-01-10T10:00:00Z", 10 * 60));
+
+        assert!(result.is_err(), "el empleado no debe poder atender un día marcado como no disponible");
     }
 }
