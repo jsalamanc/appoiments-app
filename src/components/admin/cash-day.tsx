@@ -4,9 +4,20 @@ import { Banknote, History } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { toast } from "sonner";
 
 import { EmptyState } from "@/components/admin/empty-state";
 import { FadeIn } from "@/components/motion/fade-in";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -16,12 +27,17 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   formatCurrency,
   formatDateTime,
   formatPaymentMethod,
   formatSaleItemType,
 } from "@/lib/format";
+import { isOwnerRole } from "@/lib/roles";
+import { voidSale } from "@/lib/sales";
+import { useCurrentUser } from "@/lib/use-current-user";
 import type { SaleWithDetails } from "@/types/database";
 
 type CashDayProps = {
@@ -31,9 +47,12 @@ type CashDayProps = {
   payments: {
     cashCount: number;
     transferCount: number;
+    cardCount: number;
     cashRevenue: number;
     transferRevenue: number;
+    cardRevenue: number;
   };
+  onVoided?: () => void;
 };
 
 export function CashDay({
@@ -41,9 +60,32 @@ export function CashDay({
   salesCount,
   totalRevenue,
   payments,
+  onVoided,
 }: CashDayProps) {
   const router = useRouter();
   const [selected, setSelected] = useState<SaleWithDetails | null>(null);
+  const [voidReason, setVoidReason] = useState("");
+  const [confirmingVoid, setConfirmingVoid] = useState(false);
+  const [voiding, setVoiding] = useState(false);
+  const { user } = useCurrentUser();
+  const canVoid = isOwnerRole(user?.role);
+
+  const handleVoid = async () => {
+    if (!selected) return;
+    setVoiding(true);
+    try {
+      await voidSale(selected.id, voidReason.trim() || undefined);
+      toast.success("Venta anulada");
+      setConfirmingVoid(false);
+      setSelected(null);
+      setVoidReason("");
+      onVoided?.();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "No se pudo anular la venta");
+    } finally {
+      setVoiding(false);
+    }
+  };
   const todayLabel = new Intl.DateTimeFormat("es-CO", {
     weekday: "long",
     day: "numeric",
@@ -72,7 +114,7 @@ export function CashDay({
 
       <FadeIn
         delay={0.05}
-        className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4"
+        className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5"
       >
         <div className="rounded-3xl border border-border/70 bg-card shadow-sm p-5">
           <p className="text-sm text-muted-foreground">Total cobrado</p>
@@ -103,6 +145,15 @@ export function CashDay({
             {payments.transferCount === 1 ? "" : "s"}
           </p>
         </div>
+        <div className="rounded-3xl border border-border/70 bg-card shadow-sm p-5">
+          <p className="text-sm text-muted-foreground">Tarjeta</p>
+          <p className="font-heading text-3xl font-semibold">
+            {formatCurrency(payments.cardRevenue)}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            {payments.cardCount} venta{payments.cardCount === 1 ? "" : "s"}
+          </p>
+        </div>
       </FadeIn>
 
       {sales.length === 0 ? (
@@ -128,13 +179,22 @@ export function CashDay({
               className="flex w-full flex-col gap-2 rounded-3xl border border-border/70 bg-card shadow-sm px-4 py-3 text-left transition hover:border-primary/40 sm:flex-row sm:items-center sm:justify-between"
             >
               <div>
-                <p className="font-medium">{sale.customers.name}</p>
+                <p className="flex items-center gap-2 font-medium">
+                  {sale.customers.name}
+                  {sale.voided_at && <Badge variant="destructive">Anulada</Badge>}
+                </p>
                 <p className="text-sm text-muted-foreground">
                   {formatDateTime(sale.sold_at)} ·{" "}
                   {formatPaymentMethod(sale.payment_method)}
                 </p>
               </div>
-              <p className="font-semibold">
+              <p
+                className={
+                  sale.voided_at
+                    ? "font-semibold text-muted-foreground line-through"
+                    : "font-semibold"
+                }
+              >
                 {formatCurrency(Number(sale.total))}
               </p>
             </button>
@@ -155,6 +215,14 @@ export function CashDay({
           </DialogHeader>
           {selected && (
             <div className="space-y-3 text-sm">
+              {selected.voided_at && (
+                <div className="rounded-xl border border-destructive/30 bg-destructive/5 px-3 py-2 text-destructive">
+                  <p className="font-medium">Venta anulada</p>
+                  {selected.void_reason && (
+                    <p className="text-xs">{selected.void_reason}</p>
+                  )}
+                </div>
+              )}
               <p>
                 <span className="text-muted-foreground">Cliente: </span>
                 {selected.customers.name}
@@ -163,6 +231,12 @@ export function CashDay({
                 <span className="text-muted-foreground">Pago: </span>
                 {formatPaymentMethod(selected.payment_method)}
               </p>
+              {selected.discount_amount > 0 && (
+                <p>
+                  <span className="text-muted-foreground">Descuento: </span>
+                  {formatCurrency(selected.discount_amount)}
+                </p>
+              )}
               <div className="space-y-2">
                 {selected.sale_items.map((item) => (
                   <div
@@ -184,10 +258,54 @@ export function CashDay({
               <p className="text-right text-lg font-semibold">
                 Total {formatCurrency(Number(selected.total))}
               </p>
+              {canVoid && !selected.voided_at && (
+                <Button
+                  type="button"
+                  variant="destructive"
+                  className="w-full"
+                  onClick={() => setConfirmingVoid(true)}
+                >
+                  Anular venta
+                </Button>
+              )}
             </div>
           )}
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={confirmingVoid} onOpenChange={setConfirmingVoid}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Anular esta venta?</AlertDialogTitle>
+            <AlertDialogDescription>
+              El stock de los productos vendidos vuelve a quedar disponible y
+              la venta deja de contar en caja e ingresos. Esta acción no se
+              puede deshacer.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="void-reason">Motivo (opcional)</Label>
+            <Input
+              id="void-reason"
+              value={voidReason}
+              onChange={(e) => setVoidReason(e.target.value)}
+              placeholder="Ej. el cliente se arrepintió"
+            />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={voiding}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={voiding}
+              onClick={(e) => {
+                e.preventDefault();
+                void handleVoid();
+              }}
+            >
+              {voiding ? "Anulando..." : "Anular venta"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

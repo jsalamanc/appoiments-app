@@ -37,8 +37,10 @@ type StatCard = {
 type PaymentBreakdown = {
   cash_count: number;
   transfer_count: number;
+  card_count: number;
   cash_revenue: number;
   transfer_revenue: number;
+  card_revenue: number;
 };
 
 type RevenueMetricsData = {
@@ -59,8 +61,10 @@ function toPaymentStats(p: PaymentBreakdown) {
   return {
     cashCount: p.cash_count,
     transferCount: p.transfer_count,
+    cardCount: p.card_count,
     cashRevenue: p.cash_revenue,
     transferRevenue: p.transfer_revenue,
+    cardRevenue: p.card_revenue,
   };
 }
 

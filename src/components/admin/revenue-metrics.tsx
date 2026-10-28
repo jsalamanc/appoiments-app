@@ -11,9 +11,17 @@ import { cn } from "@/lib/utils";
 type PaymentStats = {
   cashCount: number;
   transferCount: number;
+  cardCount: number;
   cashRevenue: number;
   transferRevenue: number;
+  cardRevenue: number;
 };
+
+const PAYMENT_METHODS = [
+  { key: "cash", label: "Efectivo", tone: "bg-blush/40", bar: "bg-blush" },
+  { key: "transfer", label: "Transferencia", tone: "bg-mint/50", bar: "bg-mint" },
+  { key: "card", label: "Tarjeta", tone: "bg-lavender/50", bar: "bg-lavender" },
+] as const;
 
 type PaymentPeriod = RevenuePeriod | "all";
 
@@ -70,12 +78,22 @@ export function RevenueMetrics({
         : monthRevenue;
 
   const paymentStats = payments[paymentPeriod];
-  const paymentTotal = paymentStats.cashCount + paymentStats.transferCount;
-  const cashPercent =
-    paymentTotal === 0
-      ? 0
-      : Math.round((paymentStats.cashCount / paymentTotal) * 100);
-  const transferPercent = paymentTotal === 0 ? 0 : 100 - cashPercent;
+  const paymentTotal =
+    paymentStats.cashCount + paymentStats.transferCount + paymentStats.cardCount;
+  const countFor = (key: (typeof PAYMENT_METHODS)[number]["key"]) =>
+    key === "cash"
+      ? paymentStats.cashCount
+      : key === "transfer"
+        ? paymentStats.transferCount
+        : paymentStats.cardCount;
+  const revenueFor = (key: (typeof PAYMENT_METHODS)[number]["key"]) =>
+    key === "cash"
+      ? paymentStats.cashRevenue
+      : key === "transfer"
+        ? paymentStats.transferRevenue
+        : paymentStats.cardRevenue;
+  const percentFor = (key: (typeof PAYMENT_METHODS)[number]["key"]) =>
+    paymentTotal === 0 ? 0 : Math.round((countFor(key) / paymentTotal) * 100);
 
   return (
     <div className="space-y-4">
@@ -129,7 +147,7 @@ export function RevenueMetrics({
           <div>
             <p className="text-sm text-muted-foreground">Métodos de pago</p>
             <h2 className="font-heading text-2xl font-semibold">
-              Efectivo vs transferencia
+              Efectivo, transferencia y tarjeta
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
               {periodHint(paymentPeriod)}
@@ -166,58 +184,42 @@ export function RevenueMetrics({
               </span>
               <span>
                 {formatCurrency(
-                  paymentStats.cashRevenue + paymentStats.transferRevenue
+                  paymentStats.cashRevenue +
+                    paymentStats.transferRevenue +
+                    paymentStats.cardRevenue
                 )}
               </span>
             </div>
 
             <div className="flex h-4 overflow-hidden rounded-full bg-muted">
-              <motion.div
-                key={`cash-${paymentPeriod}`}
-                className="h-full bg-blush"
-                initial={{ width: 0 }}
-                animate={{ width: `${cashPercent}%` }}
-                transition={{ duration: 0.55, ease: "easeOut" }}
-              />
-              <motion.div
-                key={`transfer-${paymentPeriod}`}
-                className="h-full bg-mint"
-                initial={{ width: 0 }}
-                animate={{ width: `${transferPercent}%` }}
-                transition={{ duration: 0.55, ease: "easeOut", delay: 0.08 }}
-              />
+              {PAYMENT_METHODS.map((method) => (
+                <motion.div
+                  key={`${method.key}-${paymentPeriod}`}
+                  className={cn("h-full", method.bar)}
+                  initial={{ width: 0 }}
+                  animate={{ width: `${percentFor(method.key)}%` }}
+                  transition={{ duration: 0.55, ease: "easeOut" }}
+                />
+              ))}
             </div>
 
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="rounded-2xl bg-blush/40 px-4 py-4">
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-sm text-muted-foreground">Efectivo</p>
-                  <span className="text-xs text-muted-foreground">
-                    {cashPercent}%
-                  </span>
+            <div className="grid gap-3 sm:grid-cols-3">
+              {PAYMENT_METHODS.map((method) => (
+                <div key={method.key} className={cn("rounded-2xl px-4 py-4", method.tone)}>
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-sm text-muted-foreground">{method.label}</p>
+                    <span className="text-xs text-muted-foreground">
+                      {percentFor(method.key)}%
+                    </span>
+                  </div>
+                  <p className="mt-1 font-heading text-3xl font-semibold">
+                    {countFor(method.key)}
+                  </p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {formatCurrency(revenueFor(method.key))}
+                  </p>
                 </div>
-                <p className="mt-1 font-heading text-3xl font-semibold">
-                  {paymentStats.cashCount}
-                </p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {formatCurrency(paymentStats.cashRevenue)}
-                </p>
-              </div>
-
-              <div className="rounded-2xl bg-mint/50 px-4 py-4">
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-sm text-muted-foreground">Transferencia</p>
-                  <span className="text-xs text-muted-foreground">
-                    {transferPercent}%
-                  </span>
-                </div>
-                <p className="mt-1 font-heading text-3xl font-semibold">
-                  {paymentStats.transferCount}
-                </p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {formatCurrency(paymentStats.transferRevenue)}
-                </p>
-              </div>
+              ))}
             </div>
           </div>
         )}

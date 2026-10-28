@@ -38,7 +38,7 @@ export type Database = {
         Row: {
           id: string;
           product_id: string;
-          movement_type: "initial" | "adjustment" | "sale";
+          movement_type: "initial" | "adjustment" | "sale" | "return";
           quantity_delta: number;
           stock_after: number;
           sale_id: string | null;
@@ -123,11 +123,15 @@ export type Database = {
         Row: {
           id: string;
           customer_id: string;
-          payment_method: "cash" | "transfer";
+          user_id: string | null;
+          payment_method: "cash" | "transfer" | "card" | "mixed";
           total: number;
+          discount_amount: number;
           sold_at: string;
           created_at: string;
           appointment_id: string | null;
+          voided_at: string | null;
+          void_reason: string | null;
         };
       };
       sale_items: {
@@ -142,6 +146,15 @@ export type Database = {
           unit_price: number;
           quantity: number;
           line_total: number;
+          created_at: string;
+        };
+      };
+      sale_payments: {
+        Row: {
+          id: string;
+          sale_id: string;
+          method: "cash" | "transfer" | "card";
+          amount: number;
           created_at: string;
         };
       };
@@ -162,7 +175,8 @@ export type Employee = Database["public"]["Tables"]["employees"]["Row"];
 export type Appointment = Database["public"]["Tables"]["appointments"]["Row"];
 export type Sale = Database["public"]["Tables"]["sales"]["Row"];
 export type SaleItem = Database["public"]["Tables"]["sale_items"]["Row"];
-export type PaymentMethod = Sale["payment_method"];
+export type SalePayment = Database["public"]["Tables"]["sale_payments"]["Row"];
+export type PaymentMethod = SalePayment["method"];
 export type SaleItemType = SaleItem["item_type"];
 export type InventoryMovementType = InventoryMovement["movement_type"];
 export type AppointmentStatus = Appointment["status"];

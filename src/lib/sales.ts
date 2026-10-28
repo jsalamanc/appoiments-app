@@ -44,18 +44,26 @@ export function getPeriodRange(period: RevenuePeriod, now = new Date()) {
   return { from: start.toISOString(), to };
 }
 
+export type PaymentLineInput = {
+  method: PaymentMethod;
+  amount: number;
+};
+
 export async function createSale(input: {
   customerId: string;
-  paymentMethod: PaymentMethod;
   items: CartLineInput[];
+  payments: PaymentLineInput[];
+  discountAmount?: number;
 }): Promise<string> {
   if (input.items.length === 0) {
     throw new Error("Agrega al menos un ítem a la venta");
   }
+  if (input.payments.length === 0) {
+    throw new Error("Agrega al menos un medio de pago");
+  }
 
   return invoke<string>("create_sale_with_inventory", {
     customerId: input.customerId,
-    paymentMethod: input.paymentMethod,
     items: input.items.map((item) => ({
       item_type: item.item_type,
       item_id: item.item_id,
@@ -63,5 +71,16 @@ export async function createSale(input: {
       unit_price: item.unit_price,
       quantity: item.quantity,
     })),
+    payments: input.payments.map((payment) => ({
+      method: payment.method,
+      amount: payment.amount,
+    })),
+    discountAmount: input.discountAmount,
   });
+}
+
+// Anula una venta ya registrada — revierte el stock vendido y la saca de
+// caja/ingresos (issue #2, Fase 2). Solo el dueño puede hacerlo.
+export async function voidSale(saleId: string, reason?: string): Promise<void> {
+  await invoke("void_sale", { saleId, reason });
 }

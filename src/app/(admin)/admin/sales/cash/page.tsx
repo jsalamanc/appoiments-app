@@ -10,8 +10,10 @@ import type { SaleWithDetails } from "@/types/database";
 type PaymentBreakdown = {
   cash_count: number;
   transfer_count: number;
+  card_count: number;
   cash_revenue: number;
   transfer_revenue: number;
+  card_revenue: number;
 };
 
 type CashDaySummary = {
@@ -24,17 +26,18 @@ type CashDaySummary = {
 
 export default function CashDayPage() {
   const [summary, setSummary] = useState<CashDaySummary | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
     const { from } = getPeriodRange("day");
-    invoke<CashDaySummary>("get_cash_day_summary", { from }).then((r) => {
-      if (!cancelled) setSummary(r);
+    invoke<CashDaySummary>("get_cash_day_summary", { from }).then((result) => {
+      if (!cancelled) setSummary(result);
     });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [reloadKey]);
 
   if (!summary) return null;
 
@@ -46,9 +49,12 @@ export default function CashDayPage() {
       payments={{
         cashCount: summary.payments.cash_count,
         transferCount: summary.payments.transfer_count,
+        cardCount: summary.payments.card_count,
         cashRevenue: summary.payments.cash_revenue,
         transferRevenue: summary.payments.transfer_revenue,
+        cardRevenue: summary.payments.card_revenue,
       }}
+      onVoided={() => setReloadKey((k) => k + 1)}
     />
   );
 }

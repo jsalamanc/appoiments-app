@@ -2,8 +2,19 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
+import { toast } from "sonner";
 
 import { FadeIn, StaggerChildren, StaggerItem } from "@/components/motion/fade-in";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -13,16 +24,23 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   formatCurrency,
   formatDateTime,
   formatPaymentMethod,
   formatSaleItemType,
 } from "@/lib/format";
-import type { PaymentMethod, SaleWithDetails } from "@/types/database";
+import { isOwnerRole } from "@/lib/roles";
+import { voidSale } from "@/lib/sales";
+import { useCurrentUser } from "@/lib/use-current-user";
+import type { Sale, SaleWithDetails } from "@/types/database";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 
 const PATHNAME = "/admin/sales/history";
+
+type PaymentFilter = Sale["payment_method"] | "all";
 
 type SalesHistoryProps = {
   sales: SaleWithDetails[];
@@ -30,17 +48,20 @@ type SalesHistoryProps = {
   totalPages: number;
   total: number;
   pageSize: number;
-  paymentMethod: PaymentMethod | "all";
+  paymentMethod: PaymentFilter;
   highlightId?: string;
+  onVoided?: () => void;
 };
 
-const FILTERS: { value: PaymentMethod | "all"; label: string }[] = [
+const FILTERS: { value: PaymentFilter; label: string }[] = [
   { value: "all", label: "Todos" },
   { value: "cash", label: "Efectivo" },
   { value: "transfer", label: "Transferencia" },
+  { value: "card", label: "Tarjeta" },
+  { value: "mixed", label: "Mixto" },
 ];
 
-function paymentHref(method: PaymentMethod | "all", page = 1) {
+function paymentHref(method: PaymentFilter, page = 1) {
   const params = new URLSearchParams();
   if (method !== "all") params.set("payment", method);
   if (page > 1) params.set("page", String(page));
@@ -56,10 +77,33 @@ export function SalesHistory({
   pageSize,
   paymentMethod,
   highlightId,
+  onVoided,
 }: SalesHistoryProps) {
   const [selected, setSelected] = useState<SaleWithDetails | null>(
     () => sales.find((sale) => sale.id === highlightId) ?? null
   );
+  const [voidReason, setVoidReason] = useState("");
+  const [confirmingVoid, setConfirmingVoid] = useState(false);
+  const [voiding, setVoiding] = useState(false);
+  const { user } = useCurrentUser();
+  const canVoid = isOwnerRole(user?.role);
+
+  const handleVoid = async () => {
+    if (!selected) return;
+    setVoiding(true);
+    try {
+      await voidSale(selected.id, voidReason.trim() || undefined);
+      toast.success("Venta anulada");
+      setConfirmingVoid(false);
+      setSelected(null);
+      setVoidReason("");
+      onVoided?.();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "No se pudo anular la venta");
+    } finally {
+      setVoiding(false);
+    }
+  };
 
   const from = total === 0 ? 0 : (page - 1) * pageSize + 1;
   const to = Math.min(page * pageSize, total);
@@ -126,8 +170,9 @@ export function SalesHistory({
                 >
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
-                      <p className="font-heading text-xl font-semibold">
+                      <p className="flex items-center gap-2 font-heading text-xl font-semibold">
                         {sale.customers?.name ?? "Cliente"}
+                        {sale.voided_at && <Badge variant="destructive">Anulada</Badge>}
                       </p>
                       <p className="text-sm text-muted-foreground">
                         {sale.customers?.email} · {formatDateTime(sale.sold_at)}
@@ -137,7 +182,13 @@ export function SalesHistory({
                       <Badge variant="secondary">
                         {formatPaymentMethod(sale.payment_method)}
                       </Badge>
-                      <p className="font-heading text-2xl font-semibold">
+                      <p
+                        className={
+                          sale.voided_at
+                            ? "font-heading text-2xl font-semibold text-muted-foreground line-through"
+                            : "font-heading text-2xl font-semibold"
+                        }
+                      >
                         {formatCurrency(Number(sale.total))}
                       </p>
                     </div>
@@ -209,6 +260,14 @@ export function SalesHistory({
           </DialogHeader>
           {selected && (
             <div className="space-y-4">
+              {selected.voided_at && (
+                <div className="rounded-xl border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+                  <p className="font-medium">Venta anulada</p>
+                  {selected.void_reason && (
+                    <p className="text-xs">{selected.void_reason}</p>
+                  )}
+                </div>
+              )}
               <div className="grid gap-2 text-sm">
                 <p>
                   <span className="text-muted-foreground">Documento: </span>
@@ -226,6 +285,12 @@ export function SalesHistory({
                   <span className="text-muted-foreground">Pago: </span>
                   {formatPaymentMethod(selected.payment_method)}
                 </p>
+                {selected.discount_amount > 0 && (
+                  <p>
+                    <span className="text-muted-foreground">Descuento: </span>
+                    {formatCurrency(selected.discount_amount)}
+                  </p>
+                )}
               </div>
               <div className="space-y-2">
                 {selected.sale_items.map((item) => (
@@ -253,10 +318,54 @@ export function SalesHistory({
                   {formatCurrency(Number(selected.total))}
                 </span>
               </div>
+              {canVoid && !selected.voided_at && (
+                <Button
+                  type="button"
+                  variant="destructive"
+                  className="w-full"
+                  onClick={() => setConfirmingVoid(true)}
+                >
+                  Anular venta
+                </Button>
+              )}
             </div>
           )}
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={confirmingVoid} onOpenChange={setConfirmingVoid}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Anular esta venta?</AlertDialogTitle>
+            <AlertDialogDescription>
+              El stock de los productos vendidos vuelve a quedar disponible y
+              la venta deja de contar en caja e ingresos. Esta acción no se
+              puede deshacer.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="history-void-reason">Motivo (opcional)</Label>
+            <Input
+              id="history-void-reason"
+              value={voidReason}
+              onChange={(e) => setVoidReason(e.target.value)}
+              placeholder="Ej. el cliente se arrepintió"
+            />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={voiding}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={voiding}
+              onClick={(e) => {
+                e.preventDefault();
+                void handleVoid();
+              }}
+            >
+              {voiding ? "Anulando..." : "Anular venta"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
