@@ -226,6 +226,9 @@ function AppointmentFormFields({
 
       const readyCustomer = await ensureCustomer();
       const startsAt = startsAtDate.toISOString();
+      const localWeekday = startsAtDate.getDay();
+      const localStartMinutes =
+        startsAtDate.getHours() * 60 + startsAtDate.getMinutes();
 
       if (appointment) {
         await updateAppointment({
@@ -235,6 +238,8 @@ function AppointmentFormFields({
           serviceId: values.service_id,
           startsAt,
           notes: values.notes,
+          localWeekday,
+          localStartMinutes,
         });
         toast.success("Cita actualizada");
       } else {
@@ -244,6 +249,8 @@ function AppointmentFormFields({
           serviceId: values.service_id,
           startsAt,
           notes: values.notes,
+          localWeekday,
+          localStartMinutes,
         });
         toast.success("Cita creada");
       }

@@ -201,3 +201,38 @@ export type AppointmentWithDetails = Appointment & {
     "id" | "name" | "price" | "duration_minutes" | "status"
   > | null;
 };
+
+// `business_hours`/`employee_availability` no vienen de `invoke()` como filas
+// crudas de SQLite (snake_case) sino como DTOs serde camelCase
+// (src-tauri/src/commands/business_hours.rs), por eso se definen aquí aparte
+// en vez de a través del mapa `Database["public"]["Tables"]`. `weekday` usa
+// la convención de `Date.getDay()` (domingo=0 .. sábado=6).
+export type BusinessHours = {
+  weekday: number;
+  isOpen: boolean;
+  opensAt: string | null;
+  closesAt: string | null;
+};
+
+export type BusinessHoursInput = {
+  weekday: number;
+  isOpen: boolean;
+  opensAt: string | null;
+  closesAt: string | null;
+};
+
+export type EmployeeAvailability = {
+  id: string;
+  employeeId: string;
+  weekday: number;
+  isAvailable: boolean;
+  startsAt: string | null;
+  endsAt: string | null;
+};
+
+export type EmployeeAvailabilityInput = {
+  weekday: number;
+  isAvailable: boolean;
+  startsAt: string | null;
+  endsAt: string | null;
+};

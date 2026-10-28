@@ -1,5 +1,6 @@
 "use client";
 
+import { BusinessHoursSettings } from "@/components/admin/business-hours-settings";
 import { ModulesSettings } from "@/components/admin/modules-settings";
 import { OwnerGate } from "@/components/admin/owner-gate";
 import { StorageSettings } from "@/components/admin/storage-settings";
@@ -11,6 +12,7 @@ export default function SettingsPage() {
     <OwnerGate>
       <div className="space-y-10">
         <ModulesSettings />
+        <BusinessHoursSettings />
         <TeamSettings />
         <StorageSettings />
         <UpdateSettings />
