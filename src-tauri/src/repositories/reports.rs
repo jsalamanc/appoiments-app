@@ -34,7 +34,7 @@ pub fn employee_performance(
          FROM employees e
          LEFT JOIN appointments a
             ON a.employee_id = e.id AND a.starts_at >= ?1
-         LEFT JOIN sales s ON s.id = a.sale_id
+         LEFT JOIN sales s ON s.id = a.sale_id AND s.voided_at IS NULL
          GROUP BY e.id, e.name, e.color
          ORDER BY completed DESC, revenue DESC, e.name ASC",
     )?;
@@ -78,7 +78,7 @@ pub fn top_services(
     from: String,
 ) -> AppResult<TopServicesReport> {
     let (sales_count, total_revenue): (i64, f64) = conn.query_row(
-        "SELECT COUNT(*), COALESCE(SUM(total), 0.0) FROM sales WHERE sold_at >= ?1",
+        "SELECT COUNT(*), COALESCE(SUM(total), 0.0) FROM sales WHERE sold_at >= ?1 AND voided_at IS NULL",
         params![from],
         |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
@@ -97,7 +97,7 @@ pub fn top_services(
             SUM(si.line_total) AS revenue
          FROM sale_items si
          JOIN sales s ON s.id = si.sale_id
-         WHERE si.item_type = 'service' AND s.sold_at >= ?1
+         WHERE si.item_type = 'service' AND s.sold_at >= ?1 AND s.voided_at IS NULL
          GROUP BY COALESCE(si.service_id, si.name_snapshot)
          ORDER BY quantity DESC, revenue DESC",
     )?;
@@ -266,7 +266,7 @@ pub mod postgres {
              FROM employees e
              LEFT JOIN appointments a
                 ON a.employee_id = e.id AND a.starts_at >= $1
-             LEFT JOIN sales s ON s.id = a.sale_id
+             LEFT JOIN sales s ON s.id = a.sale_id AND s.voided_at IS NULL
              GROUP BY e.id, e.name, e.color
              ORDER BY completed DESC, revenue DESC, e.name ASC",
         )
@@ -307,7 +307,7 @@ pub mod postgres {
 
         let totals_row = sqlx::query(
             "SELECT COUNT(*) AS sales_count, COALESCE(SUM(total), 0.0) AS total_revenue
-             FROM sales WHERE sold_at >= $1",
+             FROM sales WHERE sold_at >= $1 AND voided_at IS NULL",
         )
         .bind(from)
         .fetch_one(pool)
@@ -335,7 +335,7 @@ pub mod postgres {
                 SUM(si.line_total) AS revenue
              FROM sale_items si
              JOIN sales s ON s.id = si.sale_id
-             WHERE si.item_type = 'service' AND s.sold_at >= $1
+             WHERE si.item_type = 'service' AND s.sold_at >= $1 AND s.voided_at IS NULL
              GROUP BY COALESCE(si.service_id, si.name_snapshot)
              ORDER BY quantity DESC, revenue DESC",
         )

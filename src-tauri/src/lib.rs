@@ -121,6 +121,7 @@ pub fn run() {
             commands::inventory::list_inventory_movements,
             commands::sales::get_published_catalog,
             commands::sales::create_sale_with_inventory,
+            commands::sales::void_sale,
             commands::sales::list_sales,
             commands::sales::get_cash_day_summary,
             commands::sales::get_revenue_metrics,

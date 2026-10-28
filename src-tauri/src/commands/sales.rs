@@ -52,26 +52,76 @@ pub struct SaleItemInput {
     pub quantity: i64,
 }
 
+/// Un medio de pago usado en la venta y el monto cubierto por él — una venta
+/// normal manda un solo elemento; una venta con pago mixto (ej. mitad
+/// efectivo, mitad tarjeta) manda varios, y la suma debe coincidir con el
+/// total a cobrar (issue #2, Fase 2).
+#[derive(Debug, Deserialize)]
+pub struct PaymentInput {
+    pub method: String,
+    pub amount: f64,
+}
+
 #[tauri::command]
 pub async fn create_sale_with_inventory(
     state: State<'_, AppState>,
     customer_id: String,
-    payment_method: String,
     items: Vec<SaleItemInput>,
+    payments: Vec<PaymentInput>,
+    discount_amount: Option<f64>,
 ) -> AppResult<String> {
-    state.require_user()?;
+    let user_id = state.require_user()?.id;
     match &state.db {
         AppDb::Sqlite(_) => {
             state
                 .db
                 .with_sqlite(move |conn| {
-                    repo::create_with_inventory(conn, customer_id, payment_method, items)
+                    repo::create_with_inventory(
+                        conn,
+                        customer_id,
+                        Some(user_id),
+                        items,
+                        payments,
+                        discount_amount,
+                    )
                 })
                 .await
         }
         AppDb::Postgres(pool) => {
-            repo::postgres::create_with_inventory(pool, customer_id, payment_method, items).await
+            repo::postgres::create_with_inventory(
+                pool,
+                customer_id,
+                Some(user_id),
+                items,
+                payments,
+                discount_amount,
+            )
+            .await
         }
+    }
+}
+
+/// Anula una venta ya registrada: revierte el stock de los productos
+/// vendidos (un movimiento de inventario `'return'` por cada uno) y marca la
+/// venta como anulada — a partir de ahí, `cash_day_summary`/`revenue_metrics`
+/// dejan de contarla. Solo el dueño puede anular ventas (issue #2,
+/// "funcionalidades imprescindibles"): es una reversa de dinero ya cobrado,
+/// no una operación de rutina del día a día.
+#[tauri::command]
+pub async fn void_sale(
+    state: State<'_, AppState>,
+    sale_id: String,
+    reason: Option<String>,
+) -> AppResult<()> {
+    state.require_owner()?;
+    match &state.db {
+        AppDb::Sqlite(_) => {
+            state
+                .db
+                .with_sqlite(move |conn| repo::void_sale(conn, sale_id, reason))
+                .await
+        }
+        AppDb::Postgres(pool) => repo::postgres::void_sale(pool, sale_id, reason).await,
     }
 }
 
@@ -116,8 +166,10 @@ pub async fn list_sales(
 pub struct PaymentBreakdown {
     pub cash_count: i64,
     pub transfer_count: i64,
+    pub card_count: i64,
     pub cash_revenue: f64,
     pub transfer_revenue: f64,
+    pub card_revenue: f64,
 }
 
 #[derive(Debug, Serialize)]
