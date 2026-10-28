@@ -69,8 +69,13 @@ pub fn login(
     Ok((user, session_token))
 }
 
-pub fn delete_session(conn: &mut Connection, token: String) -> AppResult<()> {
-    conn.execute("DELETE FROM sessions WHERE token = ?1", params![token])?;
+/// Solo borra la sesión si pertenece a `user_id` — ver comentario en
+/// `commands::auth::auth_logout`.
+pub fn delete_session(conn: &mut Connection, token: String, user_id: String) -> AppResult<()> {
+    conn.execute(
+        "DELETE FROM sessions WHERE token = ?1 AND user_id = ?2",
+        params![token, user_id],
+    )?;
     Ok(())
 }
 
@@ -235,9 +240,12 @@ pub mod postgres {
         Ok((user, session_token))
     }
 
-    pub async fn delete_session(pool: &PgPool, token: String) -> AppResult<()> {
-        sqlx::query("DELETE FROM sessions WHERE token = $1")
+    /// Solo borra la sesión si pertenece a `user_id` — ver comentario en
+    /// `commands::auth::auth_logout`.
+    pub async fn delete_session(pool: &PgPool, token: String, user_id: String) -> AppResult<()> {
+        sqlx::query("DELETE FROM sessions WHERE token = $1 AND user_id = $2")
             .bind(token)
+            .bind(user_id)
             .execute(pool)
             .await?;
         Ok(())
