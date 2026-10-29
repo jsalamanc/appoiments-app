@@ -6,12 +6,14 @@ use rusqlite_migration::{Migrations, M};
 const MIGRATION_0001: &str = include_str!("../migrations/0001_init.sql");
 const MIGRATION_0002: &str = include_str!("../migrations/0002_sales_v2.sql");
 const MIGRATION_0003: &str = include_str!("../migrations/0003_business_hours.sql");
+const MIGRATION_0004: &str = include_str!("../migrations/0004_commissions.sql");
 
 pub fn migrations() -> Migrations<'static> {
     Migrations::new(vec![
         M::up(MIGRATION_0001),
         M::up(MIGRATION_0002),
         M::up(MIGRATION_0003),
+        M::up(MIGRATION_0004),
     ])
 }
 

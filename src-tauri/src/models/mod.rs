@@ -1,6 +1,7 @@
 pub mod appointment;
 pub mod business_hours;
 pub mod business_profile;
+pub mod commission;
 pub mod customer;
 pub mod employee;
 pub mod inventory;
