@@ -247,7 +247,7 @@ pub fn no_shows(
         "SELECT
             c.id AS customer_id,
             c.name AS name,
-            c.email AS email,
+            COALESCE(c.email, '') AS email,
             c.phone AS phone,
             COUNT(CASE WHEN a.status = 'no_show' THEN 1 END) AS no_show_count,
             COUNT(CASE WHEN a.status = 'cancelled' THEN 1 END) AS cancelled_count,
@@ -279,7 +279,7 @@ pub fn no_shows(
             a.starts_at AS starts_at,
             c.id AS cust_id,
             c.name AS cust_name,
-            c.email AS cust_email,
+            COALESCE(c.email, '') AS cust_email,
             c.phone AS cust_phone
          FROM appointments a
          JOIN customers c ON c.id = a.customer_id
@@ -579,7 +579,7 @@ pub mod postgres {
             "SELECT
                 c.id AS customer_id,
                 c.name AS name,
-                c.email AS email,
+                COALESCE(c.email, '') AS email,
                 c.phone AS phone,
                 COUNT(CASE WHEN a.status = 'no_show' THEN 1 END) AS no_show_count,
                 COUNT(CASE WHEN a.status = 'cancelled' THEN 1 END) AS cancelled_count,
@@ -616,7 +616,7 @@ pub mod postgres {
                 a.starts_at AS starts_at,
                 c.id AS cust_id,
                 c.name AS cust_name,
-                c.email AS cust_email,
+                COALESCE(c.email, '') AS cust_email,
                 c.phone AS cust_phone
              FROM appointments a
              JOIN customers c ON c.id = a.customer_id

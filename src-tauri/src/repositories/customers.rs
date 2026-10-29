@@ -76,13 +76,7 @@ pub fn get_detail(conn: &mut Connection, id: String) -> AppResult<Option<Custome
         Err(e) => return Err(e.into()),
     };
 
-    let customer_ref = CustomerRef {
-        id: customer.id.clone(),
-        name: customer.name.clone(),
-        email: customer.email.clone(),
-        phone: customer.phone.clone(),
-        document: customer.document.clone(),
-    };
+    let customer_ref = to_customer_ref(&customer);
 
     let mut sales_stmt =
         conn.prepare("SELECT * FROM sales WHERE customer_id = ?1 ORDER BY sold_at DESC LIMIT 20")?;
@@ -129,13 +123,7 @@ pub fn get_detail(conn: &mut Connection, id: String) -> AppResult<Option<Custome
             total,
             sold_at,
             created_at,
-            customers: CustomerRef {
-                id: customer_ref.id.clone(),
-                name: customer_ref.name.clone(),
-                email: customer_ref.email.clone(),
-                phone: customer_ref.phone.clone(),
-                document: customer_ref.document.clone(),
-            },
+            customers: customer_ref.clone(),
             sale_items: items,
         });
     }
@@ -182,13 +170,7 @@ pub fn get_detail(conn: &mut Connection, id: String) -> AppResult<Option<Custome
                     color: row.get("emp_color")?,
                     active: row.get::<_, i64>("emp_active")? != 0,
                 },
-                customers: CustomerRef {
-                    id: customer_ref.id.clone(),
-                    name: customer_ref.name.clone(),
-                    email: customer_ref.email.clone(),
-                    phone: customer_ref.phone.clone(),
-                    document: customer_ref.document.clone(),
-                },
+                customers: customer_ref.clone(),
                 services,
             })
         })?
@@ -201,6 +183,39 @@ pub fn get_detail(conn: &mut Connection, id: String) -> AppResult<Option<Custome
     }))
 }
 
+/// Vacío (tras recortar espacios) se trata igual que ausente — así un campo
+/// de formulario dejado en blanco se guarda como `NULL`, no como cadena
+/// vacía (que violaría el `CHECK` de formato de email y rompería la
+/// comparación de unicidad "ignorando mayúsculas" para el documento).
+fn normalize_optional(value: &Option<String>) -> Option<String> {
+    let trimmed = value.as_deref().unwrap_or("").trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn normalize_optional_email(value: &Option<String>) -> Option<String> {
+    normalize_optional(value).map(|e| e.to_lowercase())
+}
+
+/// Vista mínima de `customer` para embeber en otros DTOs — `CustomerRef`
+/// sigue exigiendo `String` (no `Option<String>`) porque cambiar eso se
+/// propagaría a cada `join` que embebe datos de cliente (citas, ventas,
+/// reportes); en su lugar, esos `String` simplemente quedan vacíos cuando el
+/// cliente no tiene correo/documento (ver los `COALESCE(..., '')` en
+/// `repositories::{appointments,sales,reports}`).
+fn to_customer_ref(customer: &Customer) -> CustomerRef {
+    CustomerRef {
+        id: customer.id.clone(),
+        name: customer.name.clone(),
+        email: customer.email.clone().unwrap_or_default(),
+        phone: customer.phone.clone(),
+        document: customer.document.clone().unwrap_or_default(),
+    }
+}
+
 fn normalize_email(email: &str) -> String {
     email.trim().to_lowercase()
 }
@@ -208,8 +223,8 @@ fn normalize_email(email: &str) -> String {
 pub fn create(conn: &mut Connection, input: CustomerInput) -> AppResult<Customer> {
     let id = new_id();
     let now = now_iso();
-    let email = normalize_email(&input.email);
-    let document = input.document.trim().to_string();
+    let email = normalize_optional_email(&input.email);
+    let document = normalize_optional(&input.document);
 
     conn.execute(
         "INSERT INTO customers (id, name, phone, email, document, created_at, updated_at)
@@ -226,8 +241,8 @@ pub fn create(conn: &mut Connection, input: CustomerInput) -> AppResult<Customer
 }
 
 pub fn update(conn: &mut Connection, id: String, input: CustomerInput) -> AppResult<Customer> {
-    let email = normalize_email(&input.email);
-    let document = input.document.trim().to_string();
+    let email = normalize_optional_email(&input.email);
+    let document = normalize_optional(&input.document);
 
     conn.execute(
         "UPDATE customers SET name = ?1, phone = ?2, email = ?3, document = ?4, updated_at = ?5
@@ -302,7 +317,7 @@ pub mod postgres {
     use sqlx::{PgPool, Row};
 
     use crate::commands::customers::{
-        AppointmentWithDetails, CustomerDetail, CustomerInput, CustomerRef, EmployeeRef,
+        AppointmentWithDetails, CustomerDetail, CustomerInput, EmployeeRef,
         ListCustomersResult, SaleItemRow, SaleWithDetails, ServiceRef,
     };
     use crate::db::{format_pg_timestamp, new_id};
@@ -326,6 +341,8 @@ pub mod postgres {
             updated_at: ts(row, "updated_at")?,
         })
     }
+
+    use super::{normalize_optional, normalize_optional_email};
 
     fn normalize_email(email: &str) -> String {
         email.trim().to_lowercase()
@@ -413,13 +430,7 @@ pub mod postgres {
         };
         let customer = map_customer(&customer_row)?;
 
-        let customer_ref = CustomerRef {
-            id: customer.id.clone(),
-            name: customer.name.clone(),
-            email: customer.email.clone(),
-            phone: customer.phone.clone(),
-            document: customer.document.clone(),
-        };
+        let customer_ref = super::to_customer_ref(&customer);
 
         let sale_rows = sqlx::query(
             "SELECT id, appointment_id, payment_method, total, sold_at, created_at
@@ -474,13 +485,7 @@ pub mod postgres {
                 total,
                 sold_at,
                 created_at,
-                customers: CustomerRef {
-                    id: customer_ref.id.clone(),
-                    name: customer_ref.name.clone(),
-                    email: customer_ref.email.clone(),
-                    phone: customer_ref.phone.clone(),
-                    document: customer_ref.document.clone(),
-                },
+                customers: customer_ref.clone(),
                 sale_items: items,
             });
         }
@@ -534,13 +539,7 @@ pub mod postgres {
                     color: row.try_get("emp_color")?,
                     active: row.try_get("emp_active")?,
                 },
-                customers: CustomerRef {
-                    id: customer_ref.id.clone(),
-                    name: customer_ref.name.clone(),
-                    email: customer_ref.email.clone(),
-                    phone: customer_ref.phone.clone(),
-                    document: customer_ref.document.clone(),
-                },
+                customers: customer_ref.clone(),
                 services,
             });
         }
@@ -553,8 +552,8 @@ pub mod postgres {
     }
 
     pub async fn create(pool: &PgPool, input: CustomerInput) -> AppResult<Customer> {
-        let email = normalize_email(&input.email);
-        let document = input.document.trim().to_string();
+        let email = normalize_optional_email(&input.email);
+        let document = normalize_optional(&input.document);
 
         let row = sqlx::query(&format!(
             "INSERT INTO customers (id, name, phone, email, document)
@@ -573,8 +572,8 @@ pub mod postgres {
     }
 
     pub async fn update(pool: &PgPool, id: String, input: CustomerInput) -> AppResult<Customer> {
-        let email = normalize_email(&input.email);
-        let document = input.document.trim().to_string();
+        let email = normalize_optional_email(&input.email);
+        let document = normalize_optional(&input.document);
 
         let row = sqlx::query(&format!(
             "UPDATE customers SET name = $1, phone = $2, email = $3, document = $4, updated_at = now()
@@ -633,5 +632,83 @@ pub mod postgres {
             .await?;
 
         row.as_ref().map(map_customer).transpose()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn open_test_db() -> Connection {
+        let mut conn = Connection::open_in_memory().unwrap();
+        crate::db::migrations().to_latest(&mut conn).unwrap();
+        conn
+    }
+
+    fn input(name: &str, email: Option<&str>, document: Option<&str>) -> CustomerInput {
+        CustomerInput {
+            name: name.to_string(),
+            phone: "3000000000".to_string(),
+            email: email.map(str::to_string),
+            document: document.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn create_allows_missing_email_and_document() {
+        let mut conn = open_test_db();
+
+        let customer = create(&mut conn, input("Cliente de paso", None, None)).unwrap();
+
+        assert_eq!(customer.email, None);
+        assert_eq!(customer.document, None);
+    }
+
+    #[test]
+    fn create_allows_multiple_customers_without_email_or_document() {
+        let mut conn = open_test_db();
+
+        create(&mut conn, input("Cliente 1", None, None)).unwrap();
+        let result = create(&mut conn, input("Cliente 2", None, None));
+
+        assert!(result.is_ok(), "dos clientes sin correo/documento no deben chocar entre sí");
+    }
+
+    #[test]
+    fn create_treats_blank_email_as_missing() {
+        let mut conn = open_test_db();
+
+        let customer = create(&mut conn, input("Cliente", Some("   "), None)).unwrap();
+
+        assert_eq!(customer.email, None, "un email en blanco debe guardarse como NULL, no como cadena vacía");
+    }
+
+    #[test]
+    fn create_still_rejects_duplicate_email_when_present() {
+        let mut conn = open_test_db();
+        create(&mut conn, input("Cliente 1", Some("ana@test.com"), None)).unwrap();
+
+        let result = create(&mut conn, input("Cliente 2", Some("ANA@test.com"), None));
+
+        assert!(result.is_err(), "la unicidad de email debe seguir aplicando (sin distinguir mayúsculas) cuando sí hay valor");
+    }
+
+    #[test]
+    fn create_still_rejects_duplicate_document_when_present() {
+        let mut conn = open_test_db();
+        create(&mut conn, input("Cliente 1", None, Some("DOC-1"))).unwrap();
+
+        let result = create(&mut conn, input("Cliente 2", None, Some("doc-1")));
+
+        assert!(result.is_err(), "la unicidad de documento debe seguir aplicando cuando sí hay valor");
+    }
+
+    #[test]
+    fn create_rejects_malformed_email() {
+        let mut conn = open_test_db();
+
+        let result = create(&mut conn, input("Cliente", Some("no-es-un-email"), None));
+
+        assert!(result.is_err(), "un email presente sigue debiendo tener formato válido");
     }
 }

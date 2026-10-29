@@ -53,6 +53,7 @@ pub async fn get_product(state: State<'_, AppState>, id: String) -> AppResult<Op
 pub struct ProductInput {
     pub name: String,
     pub price: f64,
+    pub cost: f64,
     pub photo_path: Option<String>,
     pub status: String,
 }
@@ -142,22 +143,33 @@ pub async fn delete_product(app: AppHandle, state: State<'_, AppState>, id: Stri
 /// Replica la función Postgres `set_product_stock`: tipo de movimiento
 /// `'initial'` si el producto nunca tuvo movimientos, si no `'adjustment'`;
 /// no-op (no inserta movimiento) si el delta es 0. Corre en una transacción.
+///
+/// `unit_cost`, si se manda, se guarda como el nuevo `products.cost` — solo
+/// cuando la entrada aumenta el stock (una entrada de mercancía nueva), no
+/// cuando lo reduce (un ajuste a la baja no informa nada sobre el costo de
+/// reposición). Es "último costo pagado", no un promedio ponderado: más
+/// simple de calcular y de entender que llevar un costo promedio móvil, a
+/// costa de precisión si el costo varía mucho entre compras — razonable para
+/// el alcance de esta fase (issue #2, Fase 5).
 #[tauri::command]
 pub async fn set_product_stock(
     state: State<'_, AppState>,
     product_id: String,
     stock: i64,
     note: Option<String>,
+    unit_cost: Option<f64>,
 ) -> AppResult<i64> {
     state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => {
             state
                 .db
-                .with_sqlite(move |conn| repo::set_stock(conn, product_id, stock, note))
+                .with_sqlite(move |conn| repo::set_stock(conn, product_id, stock, note, unit_cost))
                 .await
         }
-        AppDb::Postgres(pool) => repo::postgres::set_stock(pool, product_id, stock, note).await,
+        AppDb::Postgres(pool) => {
+            repo::postgres::set_stock(pool, product_id, stock, note, unit_cost).await
+        }
     }
 }
 

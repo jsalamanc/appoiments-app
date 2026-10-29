@@ -116,8 +116,8 @@ pub fn list_in_range(
     let mut stmt = conn.prepare(
         "SELECT a.*,
                 e.name AS emp_name, e.color AS emp_color, e.active AS emp_active,
-                c.name AS cust_name, c.email AS cust_email, c.phone AS cust_phone,
-                c.document AS cust_document,
+                c.name AS cust_name, COALESCE(c.email, '') AS cust_email, c.phone AS cust_phone,
+                COALESCE(c.document, '') AS cust_document,
                 s.price AS svc_price, s.duration_minutes AS svc_duration, s.status AS svc_status
          FROM appointments a
          JOIN employees e ON e.id = a.employee_id
@@ -586,8 +586,8 @@ pub mod postgres {
             "SELECT a.id, a.employee_id, a.customer_id, a.service_id, a.service_name_snapshot,
                     a.starts_at, a.ends_at, a.status, a.notes, a.sale_id, a.created_at, a.updated_at,
                     e.name AS emp_name, e.color AS emp_color, e.active AS emp_active,
-                    c.name AS cust_name, c.email AS cust_email, c.phone AS cust_phone,
-                    c.document AS cust_document,
+                    c.name AS cust_name, COALESCE(c.email, '') AS cust_email, c.phone AS cust_phone,
+                    COALESCE(c.document, '') AS cust_document,
                     s.price AS svc_price, s.duration_minutes AS svc_duration, s.status AS svc_status
              FROM appointments a
              JOIN employees e ON e.id = a.employee_id

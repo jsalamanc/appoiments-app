@@ -67,6 +67,9 @@ pub fn validate_input(input: &ProductInput) -> AppResult<()> {
     if input.price < 0.0 {
         return Err(AppError::validation("El precio no puede ser negativo"));
     }
+    if input.cost < 0.0 {
+        return Err(AppError::validation("El costo no puede ser negativo"));
+    }
     if input.status != "draft" && input.status != "published" {
         return Err(AppError::validation("Estado inválido"));
     }
@@ -80,12 +83,13 @@ pub fn create(conn: &mut Connection, input: ProductInput) -> AppResult<Product> 
     let now = now_iso();
 
     conn.execute(
-        "INSERT INTO products (id, name, price, photo_path, status, stock, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6, ?6)",
+        "INSERT INTO products (id, name, price, cost, photo_path, status, stock, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7, ?7)",
         params![
             id,
             input.name.trim(),
             input.price,
+            input.cost,
             input.photo_path,
             input.status,
             now
@@ -104,11 +108,12 @@ pub fn update(conn: &mut Connection, id: String, input: ProductInput) -> AppResu
     validate_input(&input)?;
 
     conn.execute(
-        "UPDATE products SET name = ?1, price = ?2, photo_path = ?3, status = ?4, updated_at = ?5
-         WHERE id = ?6",
+        "UPDATE products SET name = ?1, price = ?2, cost = ?3, photo_path = ?4, status = ?5, updated_at = ?6
+         WHERE id = ?7",
         params![
             input.name.trim(),
             input.price,
+            input.cost,
             input.photo_path,
             input.status,
             now_iso(),
@@ -140,9 +145,15 @@ pub fn set_stock(
     product_id: String,
     stock: i64,
     note: Option<String>,
+    unit_cost: Option<f64>,
 ) -> AppResult<i64> {
     if stock < 0 {
         return Err(AppError::validation("El stock no puede ser negativo"));
+    }
+    if let Some(cost) = unit_cost {
+        if cost < 0.0 {
+            return Err(AppError::validation("El costo no puede ser negativo"));
+        }
     }
 
     let tx = conn.transaction()?;
@@ -176,10 +187,27 @@ pub fn set_stock(
     };
     let now = now_iso();
 
-    tx.execute(
-        "UPDATE products SET stock = ?1, updated_at = ?2 WHERE id = ?3",
-        params![stock, now, product_id],
-    )?;
+    // El costo solo se actualiza en una entrada (delta > 0) — una reducción
+    // de stock no informa nada sobre el costo de reposición (ver doc del
+    // comando `set_product_stock`).
+    if let Some(cost) = unit_cost {
+        if delta > 0 {
+            tx.execute(
+                "UPDATE products SET stock = ?1, cost = ?2, updated_at = ?3 WHERE id = ?4",
+                params![stock, cost, now, product_id],
+            )?;
+        } else {
+            tx.execute(
+                "UPDATE products SET stock = ?1, updated_at = ?2 WHERE id = ?3",
+                params![stock, now, product_id],
+            )?;
+        }
+    } else {
+        tx.execute(
+            "UPDATE products SET stock = ?1, updated_at = ?2 WHERE id = ?3",
+            params![stock, now, product_id],
+        )?;
+    }
 
     tx.execute(
         "INSERT INTO inventory_movements
@@ -308,13 +336,14 @@ pub mod postgres {
         validate_input(&input)?;
 
         let row = sqlx::query(
-            "INSERT INTO products (id, name, price, photo_path, status, stock)
-             VALUES ($1, $2, $3, $4, $5, 0)
+            "INSERT INTO products (id, name, price, cost, photo_path, status, stock)
+             VALUES ($1, $2, $3, $4, $5, $6, 0)
              RETURNING *",
         )
         .bind(new_id())
         .bind(input.name.trim())
         .bind(input.price)
+        .bind(input.cost)
         .bind(&input.photo_path)
         .bind(&input.status)
         .fetch_one(pool)
@@ -327,12 +356,13 @@ pub mod postgres {
         validate_input(&input)?;
 
         let row = sqlx::query(
-            "UPDATE products SET name = $1, price = $2, photo_path = $3, status = $4, updated_at = now()
-             WHERE id = $5
+            "UPDATE products SET name = $1, price = $2, cost = $3, photo_path = $4, status = $5, updated_at = now()
+             WHERE id = $6
              RETURNING *",
         )
         .bind(input.name.trim())
         .bind(input.price)
+        .bind(input.cost)
         .bind(&input.photo_path)
         .bind(&input.status)
         .bind(&id)
@@ -362,9 +392,15 @@ pub mod postgres {
         product_id: String,
         stock: i64,
         note: Option<String>,
+        unit_cost: Option<f64>,
     ) -> AppResult<i64> {
         if stock < 0 {
             return Err(AppError::validation("El stock no puede ser negativo"));
+        }
+        if let Some(cost) = unit_cost {
+            if cost < 0.0 {
+                return Err(AppError::validation("El costo no puede ser negativo"));
+            }
         }
 
         let mut tx = pool.begin().await?;
@@ -393,11 +429,22 @@ pub mod postgres {
             "adjustment"
         };
 
-        sqlx::query("UPDATE products SET stock = $1, updated_at = now() WHERE id = $2")
-            .bind(stock)
-            .bind(&product_id)
-            .execute(&mut *tx)
-            .await?;
+        // El costo solo se actualiza en una entrada (delta > 0) — ver doc de
+        // `super::set_stock`.
+        if let (Some(cost), true) = (unit_cost, delta > 0) {
+            sqlx::query("UPDATE products SET stock = $1, cost = $2, updated_at = now() WHERE id = $3")
+                .bind(stock)
+                .bind(cost)
+                .bind(&product_id)
+                .execute(&mut *tx)
+                .await?;
+        } else {
+            sqlx::query("UPDATE products SET stock = $1, updated_at = now() WHERE id = $2")
+                .bind(stock)
+                .bind(&product_id)
+                .execute(&mut *tx)
+                .await?;
+        }
 
         sqlx::query(
             "INSERT INTO inventory_movements
@@ -427,5 +474,77 @@ pub mod postgres {
             return Err(AppError::NotFound);
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn open_test_db() -> Connection {
+        let mut conn = Connection::open_in_memory().unwrap();
+        crate::db::migrations().to_latest(&mut conn).unwrap();
+        conn
+    }
+
+    fn input(price: f64, cost: f64) -> ProductInput {
+        ProductInput {
+            name: "Shampoo".to_string(),
+            price,
+            cost,
+            photo_path: None,
+            status: "draft".to_string(),
+        }
+    }
+
+    #[test]
+    fn create_stores_cost() {
+        let mut conn = open_test_db();
+
+        let product = create(&mut conn, input(50.0, 20.0)).unwrap();
+
+        assert_eq!(product.cost, 20.0);
+    }
+
+    #[test]
+    fn create_rejects_negative_cost() {
+        let mut conn = open_test_db();
+
+        let result = create(&mut conn, input(50.0, -1.0));
+
+        assert!(result.is_err(), "el costo no puede ser negativo");
+    }
+
+    #[test]
+    fn set_stock_updates_cost_when_stock_increases_with_unit_cost() {
+        let mut conn = open_test_db();
+        let product = create(&mut conn, input(50.0, 20.0)).unwrap();
+
+        set_stock(&mut conn, product.id.clone(), 10, None, Some(25.0)).unwrap();
+
+        let updated = get(&mut conn, product.id).unwrap().unwrap();
+        assert_eq!(updated.cost, 25.0, "una entrada de stock con costo debe actualizar el costo del producto");
+    }
+
+    #[test]
+    fn set_stock_ignores_unit_cost_when_stock_decreases() {
+        let mut conn = open_test_db();
+        let product = create(&mut conn, input(50.0, 20.0)).unwrap();
+        set_stock(&mut conn, product.id.clone(), 10, None, Some(25.0)).unwrap();
+
+        set_stock(&mut conn, product.id.clone(), 5, None, Some(99.0)).unwrap();
+
+        let updated = get(&mut conn, product.id).unwrap().unwrap();
+        assert_eq!(updated.cost, 25.0, "una reducción de stock no debe cambiar el costo de reposición");
+    }
+
+    #[test]
+    fn set_stock_rejects_negative_unit_cost() {
+        let mut conn = open_test_db();
+        let product = create(&mut conn, input(50.0, 20.0)).unwrap();
+
+        let result = set_stock(&mut conn, product.id, 10, None, Some(-5.0));
+
+        assert!(result.is_err());
     }
 }

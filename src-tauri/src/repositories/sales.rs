@@ -119,7 +119,8 @@ fn row_exists(conn: &rusqlite::Connection, sql: &str, id: &str) -> AppResult<boo
 
 fn load_customer_ref(conn: &rusqlite::Connection, customer_id: &str) -> AppResult<CustomerRef> {
     let customer = conn.query_row(
-        "SELECT id, name, email, phone, document FROM customers WHERE id = ?1",
+        "SELECT id, name, COALESCE(email, '') AS email, phone, COALESCE(document, '') AS document
+         FROM customers WHERE id = ?1",
         params![customer_id],
         |row| {
             Ok(CustomerRef {
@@ -742,10 +743,13 @@ pub mod postgres {
     }
 
     async fn load_customer_ref(pool: &PgPool, customer_id: &str) -> AppResult<CustomerRef> {
-        let row = sqlx::query("SELECT id, name, email, phone, document FROM customers WHERE id = $1")
-            .bind(customer_id)
-            .fetch_one(pool)
-            .await?;
+        let row = sqlx::query(
+            "SELECT id, name, COALESCE(email, '') AS email, phone, COALESCE(document, '') AS document
+             FROM customers WHERE id = $1",
+        )
+        .bind(customer_id)
+        .fetch_one(pool)
+        .await?;
         Ok(CustomerRef {
             id: row.try_get(0)?,
             name: row.try_get(1)?,

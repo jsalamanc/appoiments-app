@@ -36,7 +36,7 @@ pub async fn list_customers(
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct CustomerRef {
     pub id: String,
     pub name: String,
@@ -132,8 +132,8 @@ pub async fn get_customer_detail(
 pub struct CustomerInput {
     pub name: String,
     pub phone: String,
-    pub email: String,
-    pub document: String,
+    pub email: Option<String>,
+    pub document: Option<String>,
 }
 
 #[tauri::command]
