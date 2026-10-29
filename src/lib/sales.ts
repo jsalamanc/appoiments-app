@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
-import type { PaymentMethod, SaleItemType } from "@/types/database";
+import type { PaymentMethod, SaleItemType, SaleWithDetails } from "@/types/database";
 
 export type CartLineInput = {
   item_type: SaleItemType;
@@ -83,4 +83,10 @@ export async function createSale(input: {
 // caja/ingresos (issue #2, Fase 2). Solo el dueño puede hacerlo.
 export async function voidSale(saleId: string, reason?: string): Promise<void> {
   await invoke("void_sale", { saleId, reason });
+}
+
+/** Venta individual con todos sus detalles, para el recibo imprimible
+ * (issue #2, Fase 5). */
+export async function getSale(id: string): Promise<SaleWithDetails | null> {
+  return invoke<SaleWithDetails | null>("get_sale", { id });
 }

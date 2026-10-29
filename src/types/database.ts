@@ -27,6 +27,7 @@ export type Database = {
           id: string;
           name: string;
           price: number;
+          cost: number;
           photo_path: string | null;
           status: "draft" | "published";
           stock: number;
@@ -87,8 +88,10 @@ export type Database = {
           id: string;
           name: string;
           phone: string;
-          email: string;
-          document: string;
+          // Issue #2, Fase 5: opcionales — una venta rápida no obliga a
+          // inventar correo/documento.
+          email: string | null;
+          document: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -188,14 +191,30 @@ export type PackageWithItems = Package & {
   })[];
 };
 
+/**
+ * Vista de cliente embebida en ventas/citas — a diferencia de `Customer`,
+ * `email`/`document` siempre son `string` (vacía si el cliente no tiene),
+ * nunca `null`: el backend arma esto con `COALESCE(email, '')` en vez de
+ * propagar el tipo opcional a cada DTO que embebe un cliente (ver
+ * `commands::customers::CustomerRef` en Rust).
+ */
+export type CustomerRef = {
+  id: string;
+  name: string;
+  email: string;
+  phone: string;
+  document: string;
+};
+
 export type SaleWithDetails = Sale & {
-  customers: Pick<Customer, "id" | "name" | "email" | "phone" | "document">;
+  customers: CustomerRef;
   sale_items: SaleItem[];
+  payments: SalePayment[];
 };
 
 export type AppointmentWithDetails = Appointment & {
   employees: Pick<Employee, "id" | "name" | "color" | "active">;
-  customers: Pick<Customer, "id" | "name" | "email" | "phone" | "document">;
+  customers: CustomerRef;
   services: Pick<
     Service,
     "id" | "name" | "price" | "duration_minutes" | "status"

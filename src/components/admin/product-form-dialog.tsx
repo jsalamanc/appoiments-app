@@ -33,6 +33,7 @@ type ProductFormDialogProps = {
 type ProductInputPayload = {
   name: string;
   price: number;
+  cost: number;
   photoPath: string | null;
   status: CatalogStatus;
 };
@@ -56,7 +57,7 @@ export function ProductFormDialog({
     formState: { errors },
   } = useForm<ProductValues>({
     resolver: zodResolver(productSchema),
-    defaultValues: { name: "", price: 0, stock: 0, status: "draft" },
+    defaultValues: { name: "", price: 0, cost: 0, stock: 0, status: "draft" },
   });
 
   const status = watch("status");
@@ -66,6 +67,7 @@ export function ProductFormDialog({
       reset({
         name: product?.name ?? "",
         price: product?.price ?? 0,
+        cost: product?.cost ?? 0,
         stock: product?.stock ?? 0,
         status: product?.status ?? "draft",
       });
@@ -93,6 +95,7 @@ export function ProductFormDialog({
         const payload: ProductInputPayload = {
           name: values.name,
           price: values.price,
+          cost: values.cost,
           photoPath,
           status: values.status,
         };
@@ -101,10 +104,12 @@ export function ProductFormDialog({
         );
 
         if (values.stock !== product.stock) {
+          const isRestock = values.stock > product.stock;
           await invoke("set_product_stock", {
             productId: product.id,
             stock: values.stock,
             note: "Ajuste manual",
+            unitCost: isRestock ? values.cost : null,
           });
         }
 
@@ -117,6 +122,7 @@ export function ProductFormDialog({
         const createPayload: ProductInputPayload = {
           name: values.name,
           price: values.price,
+          cost: values.cost,
           photoPath: null,
           status: values.status,
         };
@@ -142,6 +148,7 @@ export function ProductFormDialog({
             productId: created.id,
             stock: values.stock,
             note: "Alta de producto",
+            unitCost: values.cost,
           });
         }
 
@@ -210,6 +217,23 @@ export function ProductFormDialog({
               {errors.price && (
                 <p className="text-xs text-destructive">{errors.price.message}</p>
               )}
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="product-cost">Costo (opcional)</Label>
+              <Input
+                id="product-cost"
+                type="number"
+                min={0}
+                step="100"
+                {...register("cost", { valueAsNumber: true })}
+              />
+              {errors.cost && (
+                <p className="text-xs text-destructive">{errors.cost.message}</p>
+              )}
+              <p className="text-xs text-muted-foreground">
+                Lo que te cuesta a ti, para calcular margen — no se muestra al
+                cliente.
+              </p>
             </div>
             <div className="space-y-2">
               <Label htmlFor="product-stock">Stock</Label>

@@ -1,11 +1,12 @@
 "use client";
 
-import { Banknote, History } from "lucide-react";
+import { Banknote, History, Receipt } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
 
+import { CashSessionPanel } from "@/components/admin/cash-session-panel";
 import { EmptyState } from "@/components/admin/empty-state";
 import { FadeIn } from "@/components/motion/fade-in";
 import {
@@ -111,6 +112,8 @@ export function CashDay({
           </Button>
         </div>
       </FadeIn>
+
+      <CashSessionPanel />
 
       <FadeIn
         delay={0.05}
@@ -258,6 +261,15 @@ export function CashDay({
               <p className="text-right text-lg font-semibold">
                 Total {formatCurrency(Number(selected.total))}
               </p>
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full"
+                render={<Link href={`/admin/sales/receipt?id=${selected.id}`} />}
+              >
+                <Receipt data-icon="inline-start" />
+                Ver recibo
+              </Button>
               {canVoid && !selected.voided_at && (
                 <Button
                   type="button"

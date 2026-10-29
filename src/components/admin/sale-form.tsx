@@ -170,10 +170,10 @@ export function SaleForm({ prefill }: { prefill?: SaleFormPrefill }) {
             setCustomer(found);
             setCustomerExists(true);
             setLookupDone(true);
-            setEmail(found.email);
+            setEmail(found.email ?? "");
             setName(found.name);
             setPhone(found.phone);
-            setCustomerDocument(found.document);
+            setCustomerDocument(found.document ?? "");
           }
         }
 
@@ -318,7 +318,7 @@ export function SaleForm({ prefill }: { prefill?: SaleFormPrefill }) {
         setCustomerExists(true);
         setName(found.name);
         setPhone(found.phone);
-        setEmail(found.email);
+        setEmail(found.email ?? "");
         toast.success("Cliente encontrado");
       } else {
         setCustomer(null);
@@ -344,12 +344,14 @@ export function SaleForm({ prefill }: { prefill?: SaleFormPrefill }) {
       throw new Error("Primero busca el documento del cliente");
     }
 
-    if (!name.trim() || !phone.trim() || !email.trim()) {
-      throw new Error("Completa nombre, teléfono y correo del cliente");
+    if (!name.trim() || !phone.trim()) {
+      throw new Error("Completa nombre y teléfono del cliente");
     }
 
-    const normalizedEmail = normalizeEmail(email);
-    if (!normalizedEmail.includes("@")) {
+    // Issue #2, Fase 5: correo/documento son opcionales — una venta rápida
+    // (cliente de paso) no debe obligar a inventarlos.
+    const normalizedEmail = email.trim() ? normalizeEmail(email) : null;
+    if (normalizedEmail && !normalizedEmail.includes("@")) {
       throw new Error("Ingresa un correo válido");
     }
 

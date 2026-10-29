@@ -43,9 +43,9 @@ export function CustomerFormDialog({
     resolver: standardSchemaResolver(customerSchema),
     defaultValues: {
       name: customer.name,
-      email: customer.email,
+      email: customer.email ?? "",
       phone: customer.phone,
-      document: customer.document,
+      document: customer.document ?? "",
     },
   });
 
@@ -53,9 +53,9 @@ export function CustomerFormDialog({
     if (open) {
       reset({
         name: customer.name,
-        email: customer.email,
+        email: customer.email ?? "",
         phone: customer.phone,
-        document: customer.document,
+        document: customer.document ?? "",
       });
     }
   }, [open, customer, reset]);
@@ -94,7 +94,7 @@ export function CustomerFormDialog({
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="customer-email">Correo</Label>
+            <Label htmlFor="customer-email">Correo (opcional)</Label>
             <Input
               id="customer-email"
               type="email"
@@ -120,7 +120,7 @@ export function CustomerFormDialog({
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="customer-document">Documento</Label>
+            <Label htmlFor="customer-document">Documento (opcional)</Label>
             <Input id="customer-document" {...register("document")} />
             {errors.document && (
               <p className="text-xs text-destructive">

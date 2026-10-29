@@ -175,7 +175,7 @@ function AppointmentFormFields({
         setCustomer(found);
         setName(found.name);
         setPhone(found.phone);
-        setCustomerDocument(found.document);
+        setCustomerDocument(found.document ?? "");
         toast.success("Cliente encontrado");
       } else {
         setCustomer(null);

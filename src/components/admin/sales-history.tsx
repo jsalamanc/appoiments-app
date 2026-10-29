@@ -36,7 +36,7 @@ import { isOwnerRole } from "@/lib/roles";
 import { voidSale } from "@/lib/sales";
 import { useCurrentUser } from "@/lib/use-current-user";
 import type { Sale, SaleWithDetails } from "@/types/database";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, Receipt } from "lucide-react";
 
 const PATHNAME = "/admin/sales/history";
 
@@ -318,6 +318,15 @@ export function SalesHistory({
                   {formatCurrency(Number(selected.total))}
                 </span>
               </div>
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full"
+                render={<Link href={`/admin/sales/receipt?id=${selected.id}`} />}
+              >
+                <Receipt data-icon="inline-start" />
+                Ver recibo
+              </Button>
               {canVoid && !selected.voided_at && (
                 <Button
                   type="button"

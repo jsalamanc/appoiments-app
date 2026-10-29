@@ -33,6 +33,7 @@ export const catalogStatusSchema = z.enum(["draft", "published"]);
 export const productSchema = z.object({
   name: z.string().min(2, "Nombre requerido"),
   price: money,
+  cost: money,
   stock: z
     .number({ error: "Stock inválido" })
     .int("Debe ser un número entero")
@@ -67,11 +68,15 @@ export const packageSchema = z.object({
     .min(1, "Agrega al menos un producto o servicio"),
 });
 
+/** Issue #2, Fase 5: email/document son opcionales (venta rápida, cliente
+ * de paso) — `.or(z.literal(""))` deja pasar el campo vacío del formulario
+ * sin fallar el `.email()`, y el backend ya trata una cadena vacía como
+ * ausente (ver `repositories::customers::normalize_optional`). */
 export const customerSchema = z.object({
-  email: z.email("Ingresa un correo válido"),
+  email: z.email("Ingresa un correo válido").or(z.literal("")).optional(),
   name: z.string().min(2, "Nombre requerido"),
   phone: z.string().min(7, "Teléfono requerido"),
-  document: z.string().min(5, "Documento requerido"),
+  document: z.string().optional(),
 });
 
 export const saleCartItemSchema = z.object({
