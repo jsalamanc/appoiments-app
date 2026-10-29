@@ -58,6 +58,52 @@ pub async fn get_employee_performance_report(
 }
 
 // ---------------------------------------------------------------------
+// get_employee_commissions_report
+// ---------------------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmployeeCommissionRow {
+    pub employee_id: String,
+    pub name: String,
+    pub color: String,
+    pub completed_appointments: i64,
+    pub revenue: f64,
+    pub commission_amount: f64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmployeeCommissionsReport {
+    pub period: String,
+    pub from: String,
+    pub total_commission: f64,
+    pub rows: Vec<EmployeeCommissionRow>,
+}
+
+/// Issue #22 / #2 Fase 4. Reusa el mismo universo de citas que
+/// `get_employee_performance_report` (citas completadas con venta vinculada
+/// no anulada) para calcular cuánto se le debe a cada empleado según las
+/// tasas configuradas en `commands::commissions`.
+#[tauri::command]
+pub async fn get_employee_commissions_report(
+    state: State<'_, AppState>,
+    period: String,
+    from: String,
+) -> AppResult<EmployeeCommissionsReport> {
+    state.require_owner()?;
+    match &state.db {
+        AppDb::Sqlite(_) => {
+            state
+                .db
+                .with_sqlite(move |conn| repo::employee_commissions(conn, period, from))
+                .await
+        }
+        AppDb::Postgres(pool) => repo::postgres::employee_commissions(pool, period, from).await,
+    }
+}
+
+// ---------------------------------------------------------------------
 // get_top_services_report
 // ---------------------------------------------------------------------
 
