@@ -13,6 +13,7 @@ pub mod appointments;
 pub mod auth;
 pub mod business_hours;
 pub mod business_profile;
+pub mod cash_sessions;
 pub mod commissions;
 pub mod customers;
 pub mod employees;

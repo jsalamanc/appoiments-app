@@ -139,6 +139,20 @@ pub struct ListSalesResult {
     pub payment_method: String,
 }
 
+/// Venta individual con todos sus detalles — usado por el recibo imprimible
+/// (issue #2, Fase 5).
+#[tauri::command]
+pub async fn get_sale(
+    state: State<'_, AppState>,
+    id: String,
+) -> AppResult<Option<SaleWithDetails>> {
+    state.require_user()?;
+    match &state.db {
+        AppDb::Sqlite(_) => state.db.with_sqlite(move |conn| repo::get(conn, id)).await,
+        AppDb::Postgres(pool) => repo::postgres::get(pool, id).await,
+    }
+}
+
 #[tauri::command]
 pub async fn list_sales(
     state: State<'_, AppState>,

@@ -489,6 +489,20 @@ pub fn void_sale(conn: &mut Connection, sale_id: String, reason: Option<String>)
 // list
 // ---------------------------------------------------------------------------
 
+/// Venta individual con todos sus detalles — usado por el recibo
+/// imprimible (issue #2, Fase 5). `list` ya trae `SaleWithDetails` para
+/// cada fila de una página, pero no hay forma de pedir una sola por id sin
+/// esto.
+pub fn get(conn: &mut Connection, id: String) -> AppResult<Option<SaleWithDetails>> {
+    let sale = match conn.query_row("SELECT * FROM sales WHERE id = ?1", params![id], Sale::from_row)
+    {
+        Ok(sale) => sale,
+        Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
+        Err(e) => return Err(e.into()),
+    };
+    Ok(Some(sale_to_details(conn, sale)?))
+}
+
 pub fn list(
     conn: &mut Connection,
     page: Option<i64>,
@@ -1162,6 +1176,17 @@ pub mod postgres {
 
         tx.commit().await?;
         Ok(())
+    }
+
+    /// Ver `super::get` — misma lógica, dialecto Postgres.
+    pub async fn get(pool: &PgPool, id: String) -> AppResult<Option<SaleWithDetails>> {
+        let row = sqlx::query("SELECT * FROM sales WHERE id = $1")
+            .bind(id)
+            .fetch_optional(pool)
+            .await?;
+        let Some(row) = row else { return Ok(None) };
+        let sale = Sale::from_pg_row(&row)?;
+        Ok(Some(sale_to_details(pool, sale).await?))
     }
 
     pub async fn list(
