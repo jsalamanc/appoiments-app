@@ -1,17 +1,24 @@
 "use client";
 
-import { Clock, Pencil, Plus, Trash2, Users } from "lucide-react";
+import { Clock, DollarSign, Pencil, Plus, Trash2, Users } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { DeleteConfirm } from "@/components/admin/delete-confirm";
 import { EmployeeAvailabilityDialog } from "@/components/admin/employee-availability-dialog";
+import { EmployeeCommissionDialog } from "@/components/admin/employee-commission-dialog";
 import { EmployeeFormDialog } from "@/components/admin/employee-form-dialog";
 import { EmptyState } from "@/components/admin/empty-state";
 import { FadeIn, StaggerChildren, StaggerItem } from "@/components/motion/fade-in";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  listPublishedServicesForAppointments,
+  type AppointmentServiceOption,
+} from "@/lib/appointments";
 import { getEmployeeAvailability } from "@/lib/business-hours";
+import { getEmployeeCommissionRates } from "@/lib/commissions";
+import type { EmployeeCommissionRate } from "@/lib/commissions";
 import { deleteEmployee, listEmployees } from "@/lib/employees";
 import type { Employee, EmployeeAvailability } from "@/types/database";
 
@@ -29,6 +36,14 @@ export function EmployeesManager() {
   const [availabilityOverrides, setAvailabilityOverrides] = useState<
     EmployeeAvailability[] | null
   >(null);
+  const [commissionOpen, setCommissionOpen] = useState(false);
+  const [commissionEmployee, setCommissionEmployee] = useState<Employee | null>(null);
+  const [commissionRates, setCommissionRates] = useState<EmployeeCommissionRate[] | null>(
+    null
+  );
+  const [commissionServices, setCommissionServices] = useState<AppointmentServiceOption[]>(
+    []
+  );
 
   const openAvailability = (employee: Employee) => {
     setAvailabilityEmployee(employee);
@@ -41,6 +56,26 @@ export function EmployeesManager() {
           err instanceof Error ? err.message : "Error al cargar disponibilidad"
         );
         setAvailabilityOpen(false);
+      });
+  };
+
+  const openCommission = (employee: Employee) => {
+    setCommissionEmployee(employee);
+    setCommissionRates(null);
+    setCommissionOpen(true);
+    Promise.all([
+      getEmployeeCommissionRates(employee.id),
+      listPublishedServicesForAppointments(),
+    ])
+      .then(([rates, services]) => {
+        setCommissionRates(rates);
+        setCommissionServices(services);
+      })
+      .catch((err) => {
+        toast.error(
+          err instanceof Error ? err.message : "Error al cargar la comisión"
+        );
+        setCommissionOpen(false);
       });
   };
 
@@ -163,6 +198,14 @@ export function EmployeesManager() {
                     Disponibilidad
                   </Button>
                   <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => openCommission(employee)}
+                  >
+                    <DollarSign data-icon="inline-start" />
+                    Comisión
+                  </Button>
+                  <Button
                     variant="ghost"
                     size="sm"
                     onClick={() => setToDelete(employee)}
@@ -189,6 +232,14 @@ export function EmployeesManager() {
         onOpenChange={setAvailabilityOpen}
         employee={availabilityEmployee}
         overrides={availabilityOverrides}
+      />
+
+      <EmployeeCommissionDialog
+        open={commissionOpen}
+        onOpenChange={setCommissionOpen}
+        employee={commissionEmployee}
+        rates={commissionRates}
+        services={commissionServices}
       />
 
       <DeleteConfirm
