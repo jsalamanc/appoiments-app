@@ -60,6 +60,36 @@ fn round2(value: f64) -> f64 {
     (value * 100.0).round() / 100.0
 }
 
+/// Expande los productos incluidos en un paquete (`package_items` con
+/// `item_type = 'product'`) multiplicados por `multiplier` — issue #2, Fase
+/// 5: hasta ahora vender un paquete nunca descontaba el stock de los
+/// productos que incluye (comentario explícito en el código original). Se
+/// reusa tanto al vender (`create_with_inventory`, `multiplier` = cantidad
+/// de paquetes vendidos) como al anular (`void_sale`, mismo cálculo en
+/// reversa) para que ambos caminos queden simétricos.
+fn add_package_products(
+    conn: &rusqlite::Connection,
+    package_id: &str,
+    multiplier: i64,
+    product_qty: &mut HashMap<String, i64>,
+) -> AppResult<()> {
+    let mut stmt = conn.prepare(
+        "SELECT product_id, quantity FROM package_items
+         WHERE package_id = ?1 AND item_type = 'product'",
+    )?;
+    let rows = stmt
+        .query_map(params![package_id], |row| {
+            let product_id: String = row.get(0)?;
+            let quantity: i64 = row.get(1)?;
+            Ok((product_id, quantity))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    for (product_id, quantity) in rows {
+        *product_qty.entry(product_id).or_insert(0) += quantity * multiplier;
+    }
+    Ok(())
+}
+
 /// Valida la lista de pagos de una venta y devuelve la etiqueta resumen que
 /// se guarda en `sales.payment_method`: el método único si hay uno solo, o
 /// `"mixed"` si la venta se pagó con más de un medio (issue #2, Fase 2).
@@ -201,16 +231,6 @@ pub fn create_with_inventory(
         }
     }
 
-    // Agrupa cantidades por producto distinto (solo ítems de tipo "product";
-    // los productos dentro de un paquete no descuentan inventario, igual que
-    // en el esquema actual).
-    let mut product_qty: HashMap<String, i64> = HashMap::new();
-    for item in &items {
-        if item.item_type == "product" {
-            *product_qty.entry(item.item_id.clone()).or_insert(0) += item.quantity;
-        }
-    }
-
     let tx = conn.transaction()?;
 
     // Cliente existe
@@ -264,6 +284,22 @@ pub fn create_with_inventory(
             ))
         })?;
         catalog.insert(key, resolved);
+    }
+
+    // Agrupa cantidades por producto distinto a descontar: los productos
+    // vendidos directamente, más los que trae cada paquete vendido
+    // (multiplicados por la cantidad de paquetes) — issue #2, Fase 5.
+    let mut product_qty: HashMap<String, i64> = HashMap::new();
+    for item in &items {
+        match item.item_type.as_str() {
+            "product" => {
+                *product_qty.entry(item.item_id.clone()).or_insert(0) += item.quantity;
+            }
+            "package" => {
+                add_package_products(&tx, &item.item_id, item.quantity, &mut product_qty)?;
+            }
+            _ => {}
+        }
     }
 
     let subtotal = round2(
@@ -382,9 +418,9 @@ pub fn create_with_inventory(
 
 /// Anula una venta: revierte el stock de cada producto vendido (un
 /// movimiento `'return'` por cada uno, igual de auditable que el `'sale'`
-/// original) y marca la venta con `voided_at`/`void_reason`. No hace nada
-/// con los productos vendidos dentro de un paquete, por la misma razón que
-/// `create_with_inventory` no les descuenta stock al vender.
+/// original) y marca la venta con `voided_at`/`void_reason`. Revierte tanto
+/// los productos vendidos directamente como los incluidos en un paquete
+/// vendido — simétrico con `create_with_inventory` (issue #2, Fase 5).
 ///
 /// Rechaza si la venta no existe o si ya estaba anulada — anular dos veces
 /// duplicaría la reversa de inventario.
@@ -406,10 +442,18 @@ pub fn void_sale(conn: &mut Connection, sale_id: String, reason: Option<String>)
     let sale_items = load_sale_items(&tx, &sale_id)?;
     let mut product_qty: HashMap<String, i64> = HashMap::new();
     for item in &sale_items {
-        if item.item_type == "product" {
-            if let Some(product_id) = &item.product_id {
-                *product_qty.entry(product_id.clone()).or_insert(0) += item.quantity;
+        match item.item_type.as_str() {
+            "product" => {
+                if let Some(product_id) = &item.product_id {
+                    *product_qty.entry(product_id.clone()).or_insert(0) += item.quantity;
+                }
             }
+            "package" => {
+                if let Some(package_id) = &item.package_id {
+                    add_package_products(&tx, package_id, item.quantity, &mut product_qty)?;
+                }
+            }
+            _ => {}
         }
     }
 
@@ -702,6 +746,32 @@ pub mod postgres {
 
     use super::{round2, validate_discount, validate_payments};
 
+    /// Ver `super::add_package_products` — misma lógica, dialecto Postgres.
+    /// Toma `&mut PgConnection` concreto (no genérico sobre `PgExecutor`)
+    /// porque los call sites ya tienen una transacción abierta y esta
+    /// función no necesita reusarse fuera de una (a diferencia de
+    /// `row_exists`, que sí se usa contra el pool directo en algunos sitios).
+    async fn add_package_products(
+        conn: &mut sqlx::PgConnection,
+        package_id: &str,
+        multiplier: i64,
+        product_qty: &mut HashMap<String, i64>,
+    ) -> AppResult<()> {
+        let rows = sqlx::query(
+            "SELECT product_id, quantity FROM package_items
+             WHERE package_id = $1 AND item_type = 'product'",
+        )
+        .bind(package_id)
+        .fetch_all(&mut *conn)
+        .await?;
+        for row in rows {
+            let product_id: String = row.try_get("product_id")?;
+            let quantity: i64 = row.try_get("quantity")?;
+            *product_qty.entry(product_id).or_insert(0) += quantity * multiplier;
+        }
+        Ok(())
+    }
+
     pub async fn published_catalog(pool: &PgPool) -> AppResult<PublishedCatalog> {
         let product_rows = sqlx::query("SELECT * FROM products WHERE status = 'published' ORDER BY name ASC")
             .fetch_all(pool)
@@ -831,13 +901,6 @@ pub mod postgres {
             }
         }
 
-        let mut product_qty: HashMap<String, i64> = HashMap::new();
-        for item in &items {
-            if item.item_type == "product" {
-                *product_qty.entry(item.item_id.clone()).or_insert(0) += item.quantity;
-            }
-        }
-
         let mut tx = pool.begin().await?;
 
         let customer_exists = row_exists(
@@ -892,6 +955,24 @@ pub mod postgres {
                 ))
             })?;
             catalog.insert(key, resolved);
+        }
+
+        // Ver `super::add_package_products` — mismo criterio que la versión
+        // SQLite (issue #2, Fase 5): se arma después de validar el catálogo,
+        // dentro de la transacción, porque expandir un paquete exige
+        // consultar `package_items`.
+        let mut product_qty: HashMap<String, i64> = HashMap::new();
+        for item in &items {
+            match item.item_type.as_str() {
+                "product" => {
+                    *product_qty.entry(item.item_id.clone()).or_insert(0) += item.quantity;
+                }
+                "package" => {
+                    add_package_products(&mut tx, &item.item_id, item.quantity, &mut product_qty)
+                        .await?;
+                }
+                _ => {}
+            }
         }
 
         let subtotal = round2(
@@ -1030,10 +1111,19 @@ pub mod postgres {
         let sale_items = load_sale_items(pool, &sale_id).await?;
         let mut product_qty: HashMap<String, i64> = HashMap::new();
         for item in &sale_items {
-            if item.item_type == "product" {
-                if let Some(product_id) = &item.product_id {
-                    *product_qty.entry(product_id.clone()).or_insert(0) += item.quantity;
+            match item.item_type.as_str() {
+                "product" => {
+                    if let Some(product_id) = &item.product_id {
+                        *product_qty.entry(product_id.clone()).or_insert(0) += item.quantity;
+                    }
                 }
+                "package" => {
+                    if let Some(package_id) = &item.package_id {
+                        add_package_products(&mut tx, package_id, item.quantity, &mut product_qty)
+                            .await?;
+                    }
+                }
+                _ => {}
             }
         }
 
@@ -1577,5 +1667,143 @@ mod tests {
         assert_eq!(summary.total_revenue, 0.0);
         assert_eq!(summary.payments.cash_count, 0);
         assert_eq!(summary.sales.len(), 1, "la venta anulada se sigue listando, solo no cuenta en los totales");
+    }
+
+    fn insert_published_package(conn: &Connection, id: &str, name: &str, price: f64) {
+        conn.execute(
+            "INSERT INTO packages (id, name, price, status) VALUES (?1, ?2, ?3, 'published')",
+            params![id, name, price],
+        )
+        .unwrap();
+    }
+
+    fn insert_package_product_item(conn: &Connection, package_id: &str, product_id: &str, quantity: i64) {
+        conn.execute(
+            "INSERT INTO package_items (id, package_id, item_type, product_id, quantity)
+             VALUES (?1, ?2, 'product', ?3, ?4)",
+            params![new_id(), package_id, product_id, quantity],
+        )
+        .unwrap();
+    }
+
+    fn package_item(item_id: &str, name: &str, unit_price: f64, quantity: i64) -> SaleItemInput {
+        SaleItemInput {
+            item_type: "package".to_string(),
+            item_id: item_id.to_string(),
+            name: name.to_string(),
+            unit_price,
+            quantity,
+        }
+    }
+
+    /// Issue #2, Fase 5: vender un paquete debe descontar el stock de los
+    /// productos que incluye (antes no pasaba nada — comentario explícito en
+    /// el código original).
+    #[test]
+    fn create_with_inventory_deducts_stock_for_products_inside_a_package() {
+        let mut conn = open_test_db();
+        insert_customer(&conn, "cust-1");
+        insert_published_product(&conn, "prod-1", "Crema", 10.0, 20);
+        insert_published_package(&conn, "pkg-1", "Combo spa", 80.0);
+        insert_package_product_item(&conn, "pkg-1", "prod-1", 3);
+
+        create_with_inventory(
+            &mut conn,
+            "cust-1".to_string(),
+            None,
+            vec![package_item("pkg-1", "Combo spa", 80.0, 2)],
+            cash_payment(160.0),
+            None,
+        )
+        .unwrap();
+
+        let stock: i64 = conn
+            .query_row("SELECT stock FROM products WHERE id = 'prod-1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(stock, 14, "2 paquetes x 3 unidades = 6 descontadas de 20");
+
+        let movement_type: String = conn
+            .query_row(
+                "SELECT movement_type FROM inventory_movements WHERE product_id = 'prod-1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(movement_type, "sale");
+    }
+
+    #[test]
+    fn create_with_inventory_rejects_package_sale_with_insufficient_stock() {
+        let mut conn = open_test_db();
+        insert_customer(&conn, "cust-1");
+        insert_published_product(&conn, "prod-1", "Crema", 10.0, 2);
+        insert_published_package(&conn, "pkg-1", "Combo spa", 80.0);
+        insert_package_product_item(&conn, "pkg-1", "prod-1", 3);
+
+        let result = create_with_inventory(
+            &mut conn,
+            "cust-1".to_string(),
+            None,
+            vec![package_item("pkg-1", "Combo spa", 80.0, 1)],
+            cash_payment(80.0),
+            None,
+        );
+
+        assert!(result.is_err(), "el paquete necesita 3 unidades pero el producto solo tiene 2");
+    }
+
+    #[test]
+    fn create_with_inventory_combines_direct_and_package_product_sales() {
+        let mut conn = open_test_db();
+        insert_customer(&conn, "cust-1");
+        insert_published_product(&conn, "prod-1", "Crema", 10.0, 20);
+        insert_published_package(&conn, "pkg-1", "Combo spa", 80.0);
+        insert_package_product_item(&conn, "pkg-1", "prod-1", 3);
+
+        create_with_inventory(
+            &mut conn,
+            "cust-1".to_string(),
+            None,
+            vec![
+                product_item("prod-1", "Crema", 10.0, 2),
+                package_item("pkg-1", "Combo spa", 80.0, 1),
+            ],
+            cash_payment(100.0),
+            None,
+        )
+        .unwrap();
+
+        let stock: i64 = conn
+            .query_row("SELECT stock FROM products WHERE id = 'prod-1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(stock, 15, "2 directas + 3 del paquete = 5 descontadas de 20");
+    }
+
+    /// Anular una venta con paquete debe revertir el stock de los productos
+    /// que incluye, simétrico con la venta.
+    #[test]
+    fn void_sale_reverses_stock_for_products_inside_a_package() {
+        let mut conn = open_test_db();
+        insert_customer(&conn, "cust-1");
+        insert_published_product(&conn, "prod-1", "Crema", 10.0, 20);
+        insert_published_package(&conn, "pkg-1", "Combo spa", 80.0);
+        insert_package_product_item(&conn, "pkg-1", "prod-1", 3);
+
+        let sale_id = create_with_inventory(
+            &mut conn,
+            "cust-1".to_string(),
+            None,
+            vec![package_item("pkg-1", "Combo spa", 80.0, 2)],
+            cash_payment(160.0),
+            None,
+        )
+        .unwrap();
+
+        void_sale(&mut conn, sale_id, None).unwrap();
+
+        let stock: i64 = conn
+            .query_row("SELECT stock FROM products WHERE id = 'prod-1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(stock, 20, "el stock debe volver al nivel original tras anular");
     }
 }
