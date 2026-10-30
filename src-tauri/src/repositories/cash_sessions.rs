@@ -7,10 +7,6 @@ use crate::db::{new_id, now_iso};
 use crate::error::{AppError, AppResult};
 use crate::models::cash_session::CashSession;
 
-fn round2(value: f64) -> f64 {
-    (value * 100.0).round() / 100.0
-}
-
 pub fn get_current(conn: &mut Connection) -> AppResult<Option<CashSession>> {
     let result = conn.query_row(
         "SELECT * FROM cash_sessions WHERE closed_at IS NULL ORDER BY opened_at DESC LIMIT 1",
@@ -38,9 +34,9 @@ pub fn list(conn: &mut Connection, limit: i64) -> AppResult<Vec<CashSession>> {
 pub fn open(
     conn: &mut Connection,
     opened_by: Option<String>,
-    opening_amount: f64,
+    opening_amount: i64,
 ) -> AppResult<CashSession> {
-    if opening_amount < 0.0 {
+    if opening_amount < 0 {
         return Err(AppError::validation("El monto de apertura no puede ser negativo"));
     }
 
@@ -79,16 +75,16 @@ pub fn close(
     conn: &mut Connection,
     id: String,
     closed_by: Option<String>,
-    counted_amount: f64,
+    counted_amount: i64,
     notes: Option<String>,
 ) -> AppResult<CashSession> {
-    if counted_amount < 0.0 {
+    if counted_amount < 0 {
         return Err(AppError::validation("El monto contado no puede ser negativo"));
     }
 
     let tx = conn.transaction()?;
 
-    let (opened_at, opening_amount, already_closed): (String, f64, bool) = tx
+    let (opened_at, opening_amount, already_closed): (String, i64, bool) = tx
         .query_row(
             "SELECT opened_at, opening_amount, closed_at IS NOT NULL FROM cash_sessions WHERE id = ?1",
             params![id],
@@ -100,15 +96,15 @@ pub fn close(
         return Err(AppError::validation("Esta caja ya fue cerrada"));
     }
 
-    let cash_sales: f64 = tx.query_row(
-        "SELECT COALESCE(SUM(sp.amount), 0.0) FROM sale_payments sp
+    let cash_sales: i64 = tx.query_row(
+        "SELECT COALESCE(SUM(sp.amount), 0) FROM sale_payments sp
          JOIN sales s ON s.id = sp.sale_id
          WHERE sp.method = 'cash' AND s.voided_at IS NULL AND s.sold_at >= ?1",
         params![opened_at],
         |r| r.get(0),
     )?;
-    let expected_amount = round2(opening_amount + cash_sales);
-    let difference = round2(counted_amount - expected_amount);
+    let expected_amount = opening_amount + cash_sales;
+    let difference = counted_amount - expected_amount;
     let now = now_iso();
 
     tx.execute(
@@ -146,7 +142,7 @@ mod tests {
         .unwrap();
     }
 
-    fn seed_cash_sale(conn: &mut Connection, total: f64) {
+    fn seed_cash_sale(conn: &mut Connection, total: i64) {
         let sale_id = new_id();
         conn.execute(
             "INSERT INTO sales (id, customer_id, payment_method, total) VALUES (?1, 'cust-1', 'cash', ?2)",
@@ -164,7 +160,7 @@ mod tests {
     fn open_rejects_negative_opening_amount() {
         let mut conn = open_test_db();
 
-        let result = open(&mut conn, None, -1.0);
+        let result = open(&mut conn, None, -1);
 
         assert!(result.is_err());
     }
@@ -172,9 +168,9 @@ mod tests {
     #[test]
     fn open_rejects_a_second_session_while_one_is_open() {
         let mut conn = open_test_db();
-        open(&mut conn, None, 50.0).unwrap();
+        open(&mut conn, None, 50).unwrap();
 
-        let result = open(&mut conn, None, 100.0);
+        let result = open(&mut conn, None, 100);
 
         assert!(result.is_err(), "no puede haber dos cajas abiertas a la vez");
     }
@@ -189,7 +185,7 @@ mod tests {
     #[test]
     fn get_current_returns_the_open_session() {
         let mut conn = open_test_db();
-        let opened = open(&mut conn, None, 50.0).unwrap();
+        let opened = open(&mut conn, None, 50).unwrap();
 
         let current = get_current(&mut conn).unwrap().unwrap();
 
@@ -200,15 +196,15 @@ mod tests {
     fn close_computes_expected_amount_and_difference() {
         let mut conn = open_test_db();
         seed_customer(&conn);
-        let session = open(&mut conn, None, 100.0).unwrap();
-        seed_cash_sale(&mut conn, 50.0);
-        seed_cash_sale(&mut conn, 30.0);
+        let session = open(&mut conn, None, 100).unwrap();
+        seed_cash_sale(&mut conn, 50);
+        seed_cash_sale(&mut conn, 30);
 
-        let closed = close(&mut conn, session.id, None, 175.0, None).unwrap();
+        let closed = close(&mut conn, session.id, None, 175, None).unwrap();
 
-        assert_eq!(closed.expected_amount, Some(180.0), "100 de apertura + 50 + 30 en efectivo");
-        assert_eq!(closed.counted_amount, Some(175.0));
-        assert_eq!(closed.difference, Some(-5.0), "contado - esperado = 175 - 180");
+        assert_eq!(closed.expected_amount, Some(180), "100 de apertura + 50 + 30 en efectivo");
+        assert_eq!(closed.counted_amount, Some(175));
+        assert_eq!(closed.difference, Some(-5), "contado - esperado = 175 - 180");
         assert!(get_current(&mut conn).unwrap().is_none(), "ya no debe quedar ninguna caja abierta");
     }
 
@@ -216,31 +212,31 @@ mod tests {
     fn close_ignores_voided_sales() {
         let mut conn = open_test_db();
         seed_customer(&conn);
-        let session = open(&mut conn, None, 0.0).unwrap();
-        seed_cash_sale(&mut conn, 50.0);
+        let session = open(&mut conn, None, 0).unwrap();
+        seed_cash_sale(&mut conn, 50);
         let voided_sale_id = new_id();
         conn.execute(
             "INSERT INTO sales (id, customer_id, payment_method, total, voided_at)
-             VALUES (?1, 'cust-1', 'cash', 999.0, '2026-01-01T00:00:00Z')",
+             VALUES (?1, 'cust-1', 'cash', 999, '2026-01-01T00:00:00Z')",
             params![voided_sale_id],
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO sale_payments (id, sale_id, method, amount) VALUES (?1, ?2, 'cash', 999.0)",
+            "INSERT INTO sale_payments (id, sale_id, method, amount) VALUES (?1, ?2, 'cash', 999)",
             params![new_id(), voided_sale_id],
         )
         .unwrap();
 
-        let closed = close(&mut conn, session.id, None, 50.0, None).unwrap();
+        let closed = close(&mut conn, session.id, None, 50, None).unwrap();
 
-        assert_eq!(closed.expected_amount, Some(50.0), "la venta anulada no debe contar");
+        assert_eq!(closed.expected_amount, Some(50), "la venta anulada no debe contar");
     }
 
     #[test]
     fn close_rejects_unknown_session() {
         let mut conn = open_test_db();
 
-        let result = close(&mut conn, "missing".to_string(), None, 0.0, None);
+        let result = close(&mut conn, "missing".to_string(), None, 0, None);
 
         assert!(result.is_err());
     }
@@ -248,10 +244,10 @@ mod tests {
     #[test]
     fn close_rejects_already_closed_session() {
         let mut conn = open_test_db();
-        let session = open(&mut conn, None, 0.0).unwrap();
-        close(&mut conn, session.id.clone(), None, 0.0, None).unwrap();
+        let session = open(&mut conn, None, 0).unwrap();
+        close(&mut conn, session.id.clone(), None, 0, None).unwrap();
 
-        let result = close(&mut conn, session.id, None, 0.0, None);
+        let result = close(&mut conn, session.id, None, 0, None);
 
         assert!(result.is_err(), "no se puede cerrar una caja dos veces");
     }
@@ -263,8 +259,6 @@ pub mod postgres {
     use crate::db::new_id;
     use crate::error::{AppError, AppResult};
     use crate::models::cash_session::CashSession;
-
-    use super::round2;
 
     pub async fn get_current(pool: &PgPool) -> AppResult<Option<CashSession>> {
         let row = sqlx::query(
@@ -286,9 +280,9 @@ pub mod postgres {
     pub async fn open(
         pool: &PgPool,
         opened_by: Option<String>,
-        opening_amount: f64,
+        opening_amount: i64,
     ) -> AppResult<CashSession> {
-        if opening_amount < 0.0 {
+        if opening_amount < 0 {
             return Err(AppError::validation("El monto de apertura no puede ser negativo"));
         }
 
@@ -322,10 +316,10 @@ pub mod postgres {
         pool: &PgPool,
         id: String,
         closed_by: Option<String>,
-        counted_amount: f64,
+        counted_amount: i64,
         notes: Option<String>,
     ) -> AppResult<CashSession> {
-        if counted_amount < 0.0 {
+        if counted_amount < 0 {
             return Err(AppError::validation("El monto contado no puede ser negativo"));
         }
 
@@ -342,22 +336,25 @@ pub mod postgres {
 
         use sqlx::Row;
         let opened_at: time::OffsetDateTime = existing.try_get("opened_at")?;
-        let opening_amount: f64 = existing.try_get("opening_amount")?;
+        let opening_amount: i64 = existing.try_get("opening_amount")?;
         let already_closed: bool = existing.try_get("already_closed")?;
         if already_closed {
             return Err(AppError::validation("Esta caja ya fue cerrada"));
         }
 
-        let cash_sales: f64 = sqlx::query_scalar(
-            "SELECT COALESCE(SUM(sp.amount), 0.0) FROM sale_payments sp
+        // `SUM(bigint)` en Postgres devuelve `numeric`, no `bigint` — se
+        // castea de vuelta explícitamente (ver el mismo comentario en
+        // `repositories::sales::postgres::payment_breakdown`).
+        let cash_sales: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(SUM(sp.amount), 0)::BIGINT FROM sale_payments sp
              JOIN sales s ON s.id = sp.sale_id
              WHERE sp.method = 'cash' AND s.voided_at IS NULL AND s.sold_at >= $1",
         )
         .bind(opened_at)
         .fetch_one(&mut *tx)
         .await?;
-        let expected_amount = round2(opening_amount + cash_sales);
-        let difference = round2(counted_amount - expected_amount);
+        let expected_amount = opening_amount + cash_sales;
+        let difference = counted_amount - expected_amount;
 
         let row = sqlx::query(
             "UPDATE cash_sessions SET

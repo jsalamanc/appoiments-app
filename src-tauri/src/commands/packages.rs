@@ -12,14 +12,14 @@ use crate::util::photos::{cleanup_old_photo, import_and_sync_photo};
 pub struct ProductRef {
     pub id: String,
     pub name: String,
-    pub price: f64,
+    pub price: i64,
 }
 
 #[derive(Debug, Serialize)]
 pub struct ServiceRef {
     pub id: String,
     pub name: String,
-    pub price: f64,
+    pub price: i64,
     pub duration_minutes: i64,
 }
 
@@ -41,7 +41,7 @@ pub struct PackageWithItems {
     pub id: String,
     pub name: String,
     pub description: Option<String>,
-    pub price: f64,
+    pub price: i64,
     pub photo_path: Option<String>,
     pub status: String,
     pub created_at: String,
@@ -104,7 +104,7 @@ pub struct PackageItemInput {
 pub struct PackageInput {
     pub name: String,
     pub description: Option<String>,
-    pub price: f64,
+    pub price: i64,
     pub photo_path: Option<String>,
     pub status: String,
     pub items: Vec<PackageItemInput>,

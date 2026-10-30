@@ -21,7 +21,7 @@ pub struct EmployeePerformanceRow {
     pub cancelled: i64,
     pub no_show: i64,
     pub total_appointments: i64,
-    pub revenue: f64,
+    pub revenue: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -68,7 +68,11 @@ pub struct EmployeeCommissionRow {
     pub name: String,
     pub color: String,
     pub completed_appointments: i64,
-    pub revenue: f64,
+    pub revenue: i64,
+    /// A diferencia de `revenue`, queda como `f64`: una comisión por
+    /// porcentaje (`rate_type = "percentage"`) puede dar un resultado
+    /// fraccionario (ej. 12.5% de $1.001.000) — no es un monto guardado en
+    /// la base de datos, solo un cálculo de reporte.
     pub commission_amount: f64,
 }
 
@@ -113,7 +117,7 @@ pub struct TopServiceRow {
     pub service_id: Option<String>,
     pub name: String,
     pub quantity: i64,
-    pub revenue: f64,
+    pub revenue: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -122,7 +126,9 @@ pub struct TopServicesReport {
     pub period: String,
     pub from: String,
     pub sales_count: i64,
-    pub total_revenue: f64,
+    pub total_revenue: i64,
+    /// `f64`: el ticket promedio es una división (`total_revenue /
+    /// sales_count`) que casi siempre da un resultado fraccionario.
     pub average_ticket: f64,
     pub rows: Vec<TopServiceRow>,
 }

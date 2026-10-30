@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 pub struct Product {
     pub id: String,
     pub name: String,
-    pub price: f64,
-    pub cost: f64,
+    pub price: i64,
+    pub cost: i64,
     pub photo_path: Option<String>,
     pub status: String,
     pub stock: i64,

@@ -9,8 +9,8 @@ pub struct Sale {
     /// que no registraban esto.
     pub user_id: Option<String>,
     pub payment_method: String,
-    pub total: f64,
-    pub discount_amount: f64,
+    pub total: i64,
+    pub discount_amount: i64,
     pub sold_at: String,
     pub created_at: String,
     /// `Some` si la venta fue anulada (ver `repositories::sales::void_sale`).
@@ -64,7 +64,7 @@ pub struct SalePayment {
     pub id: String,
     pub sale_id: String,
     pub method: String,
-    pub amount: f64,
+    pub amount: i64,
     pub created_at: String,
 }
 
@@ -101,9 +101,9 @@ pub struct SaleItem {
     pub service_id: Option<String>,
     pub package_id: Option<String>,
     pub name_snapshot: String,
-    pub unit_price: f64,
+    pub unit_price: i64,
     pub quantity: i64,
-    pub line_total: f64,
+    pub line_total: i64,
     pub created_at: String,
 }
 
@@ -170,8 +170,8 @@ pub struct SaleWithDetails {
     pub appointment_id: Option<String>,
     pub user_id: Option<String>,
     pub payment_method: String,
-    pub total: f64,
-    pub discount_amount: f64,
+    pub total: i64,
+    pub discount_amount: i64,
     pub sold_at: String,
     pub created_at: String,
     pub voided_at: Option<String>,

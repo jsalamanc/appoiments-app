@@ -35,7 +35,7 @@ pub async fn list_cash_sessions(
 #[tauri::command]
 pub async fn open_cash_session(
     state: State<'_, AppState>,
-    opening_amount: f64,
+    opening_amount: i64,
 ) -> AppResult<CashSession> {
     let user_id = state.require_user()?.id;
     match &state.db {
@@ -53,7 +53,7 @@ pub async fn open_cash_session(
 pub async fn close_cash_session(
     state: State<'_, AppState>,
     id: String,
-    counted_amount: f64,
+    counted_amount: i64,
     notes: Option<String>,
 ) -> AppResult<CashSession> {
     let user_id = state.require_user()?.id;

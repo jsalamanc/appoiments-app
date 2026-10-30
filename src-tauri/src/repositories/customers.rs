@@ -80,13 +80,13 @@ pub fn get_detail(conn: &mut Connection, id: String) -> AppResult<Option<Custome
 
     let mut sales_stmt =
         conn.prepare("SELECT * FROM sales WHERE customer_id = ?1 ORDER BY sold_at DESC LIMIT 20")?;
-    let sale_rows: Vec<(String, Option<String>, String, f64, String, String)> = sales_stmt
+    let sale_rows: Vec<(String, Option<String>, String, i64, String, String)> = sales_stmt
         .query_map(params![id], |row| {
             Ok((
                 row.get::<_, String>("id")?,
                 row.get::<_, Option<String>>("appointment_id")?,
                 row.get::<_, String>("payment_method")?,
-                row.get::<_, f64>("total")?,
+                row.get::<_, i64>("total")?,
                 row.get::<_, String>("sold_at")?,
                 row.get::<_, String>("created_at")?,
             ))
@@ -445,7 +445,7 @@ pub mod postgres {
             let sale_id: String = row.try_get("id")?;
             let appointment_id: Option<String> = row.try_get("appointment_id")?;
             let payment_method: String = row.try_get("payment_method")?;
-            let total: f64 = row.try_get("total")?;
+            let total: i64 = row.try_get("total")?;
             let sold_at = ts(row, "sold_at")?;
             let created_at = ts(row, "created_at")?;
 

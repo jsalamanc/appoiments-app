@@ -53,7 +53,7 @@ pub async fn get_service(state: State<'_, AppState>, id: String) -> AppResult<Op
 pub struct ServiceInput {
     pub name: String,
     pub description: Option<String>,
-    pub price: f64,
+    pub price: i64,
     pub duration_minutes: i64,
     pub photo_path: Option<String>,
     pub status: String,

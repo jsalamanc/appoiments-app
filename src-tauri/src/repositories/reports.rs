@@ -85,7 +85,7 @@ pub fn employee_commissions(
 
     let rate_map = crate::repositories::commissions::load_rate_map(conn)?;
 
-    let mut stats: HashMap<String, (i64, f64)> = HashMap::new();
+    let mut stats: HashMap<String, (i64, i64)> = HashMap::new();
     let mut commission: HashMap<String, f64> = HashMap::new();
     {
         let mut stmt = conn.prepare(
@@ -97,13 +97,13 @@ pub fn employee_commissions(
         let rows = stmt.query_map(params![from], |row| {
             let employee_id: String = row.get(0)?;
             let service_id: Option<String> = row.get(1)?;
-            let sale_total: f64 = row.get(2)?;
+            let sale_total: i64 = row.get(2)?;
             Ok((employee_id, service_id, sale_total))
         })?;
 
         for row in rows {
             let (employee_id, service_id, sale_total) = row?;
-            let entry = stats.entry(employee_id.clone()).or_insert((0, 0.0));
+            let entry = stats.entry(employee_id.clone()).or_insert((0, 0));
             entry.0 += 1;
             entry.1 += sale_total;
 
@@ -121,7 +121,7 @@ pub fn employee_commissions(
     let mut rows: Vec<EmployeeCommissionRow> = employees
         .into_iter()
         .map(|(id, name, color)| {
-            let (completed_appointments, revenue) = stats.get(&id).copied().unwrap_or((0, 0.0));
+            let (completed_appointments, revenue) = stats.get(&id).copied().unwrap_or((0, 0));
             let commission_amount = commission.get(&id).copied().unwrap_or(0.0);
             EmployeeCommissionRow {
                 employee_id: id,
@@ -138,7 +138,7 @@ pub fn employee_commissions(
         b.commission_amount
             .partial_cmp(&a.commission_amount)
             .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| b.revenue.partial_cmp(&a.revenue).unwrap_or(std::cmp::Ordering::Equal))
+            .then_with(|| b.revenue.cmp(&a.revenue))
             .then_with(|| a.name.cmp(&b.name))
     });
 
@@ -171,8 +171,8 @@ pub fn top_services(
     period: String,
     from: String,
 ) -> AppResult<TopServicesReport> {
-    let (sales_count, total_revenue): (i64, f64) = conn.query_row(
-        "SELECT COUNT(*), COALESCE(SUM(total), 0.0) FROM sales WHERE sold_at >= ?1 AND voided_at IS NULL",
+    let (sales_count, total_revenue): (i64, i64) = conn.query_row(
+        "SELECT COUNT(*), COALESCE(SUM(total), 0) FROM sales WHERE sold_at >= ?1 AND voided_at IS NULL",
         params![from],
         |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
@@ -180,7 +180,7 @@ pub fn top_services(
     let average_ticket = if sales_count == 0 {
         0.0
     } else {
-        total_revenue / sales_count as f64
+        total_revenue as f64 / sales_count as f64
     };
 
     let mut stmt = conn.prepare(
@@ -359,7 +359,7 @@ pub mod postgres {
                 COUNT(CASE WHEN a.status = 'cancelled' THEN 1 END) AS cancelled,
                 COUNT(CASE WHEN a.status = 'no_show' THEN 1 END) AS no_show,
                 COUNT(a.id) AS total_appointments,
-                COALESCE(SUM(s.total), 0.0) AS revenue
+                COALESCE(SUM(s.total), 0)::BIGINT AS revenue
              FROM employees e
              LEFT JOIN appointments a
                 ON a.employee_id = e.id AND a.starts_at >= $1
@@ -429,14 +429,14 @@ pub mod postgres {
         .fetch_all(pool)
         .await?;
 
-        let mut stats: HashMap<String, (i64, f64)> = HashMap::new();
+        let mut stats: HashMap<String, (i64, i64)> = HashMap::new();
         let mut commission: HashMap<String, f64> = HashMap::new();
         for row in &appointment_rows {
             let employee_id: String = row.try_get("employee_id")?;
             let service_id: Option<String> = row.try_get("service_id")?;
-            let sale_total: f64 = row.try_get("total")?;
+            let sale_total: i64 = row.try_get("total")?;
 
-            let entry = stats.entry(employee_id.clone()).or_insert((0, 0.0));
+            let entry = stats.entry(employee_id.clone()).or_insert((0, 0));
             entry.0 += 1;
             entry.1 += sale_total;
 
@@ -453,7 +453,7 @@ pub mod postgres {
         let mut rows: Vec<EmployeeCommissionRow> = employees
             .into_iter()
             .map(|(id, name, color)| {
-                let (completed_appointments, revenue) = stats.get(&id).copied().unwrap_or((0, 0.0));
+                let (completed_appointments, revenue) = stats.get(&id).copied().unwrap_or((0, 0));
                 let commission_amount = commission.get(&id).copied().unwrap_or(0.0);
                 EmployeeCommissionRow {
                     employee_id: id,
@@ -470,11 +470,7 @@ pub mod postgres {
             b.commission_amount
                 .partial_cmp(&a.commission_amount)
                 .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| {
-                    b.revenue
-                        .partial_cmp(&a.revenue)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                })
+                .then_with(|| b.revenue.cmp(&a.revenue))
                 .then_with(|| a.name.cmp(&b.name))
         });
 
@@ -496,19 +492,19 @@ pub mod postgres {
         let from = parse_from(&from)?;
 
         let totals_row = sqlx::query(
-            "SELECT COUNT(*) AS sales_count, COALESCE(SUM(total), 0.0) AS total_revenue
+            "SELECT COUNT(*) AS sales_count, COALESCE(SUM(total), 0)::BIGINT AS total_revenue
              FROM sales WHERE sold_at >= $1 AND voided_at IS NULL",
         )
         .bind(from)
         .fetch_one(pool)
         .await?;
         let sales_count: i64 = totals_row.try_get("sales_count")?;
-        let total_revenue: f64 = totals_row.try_get("total_revenue")?;
+        let total_revenue: i64 = totals_row.try_get("total_revenue")?;
 
         let average_ticket = if sales_count == 0 {
             0.0
         } else {
-            total_revenue / sales_count as f64
+            total_revenue as f64 / sales_count as f64
         };
 
         // A diferencia de SQLite, Postgres exige que toda columna en el
@@ -522,7 +518,7 @@ pub mod postgres {
                 MIN(si.service_id) AS service_id,
                 MIN(si.name_snapshot) AS name,
                 SUM(si.quantity) AS quantity,
-                SUM(si.line_total) AS revenue
+                SUM(si.line_total)::BIGINT AS revenue
              FROM sale_items si
              JOIN sales s ON s.id = si.sale_id
              WHERE si.item_type = 'service' AND s.sold_at >= $1 AND s.voided_at IS NULL
@@ -688,7 +684,7 @@ mod tests {
     fn seed_service(conn: &Connection, id: &str) {
         conn.execute(
             "INSERT INTO services (id, name, price, duration_minutes, status)
-             VALUES (?1, 'Corte', 20.0, 60, 'published')",
+             VALUES (?1, 'Corte', 20, 60, 'published')",
             params![id],
         )
         .unwrap();
@@ -705,7 +701,7 @@ mod tests {
         service_id: &str,
         starts_at: &str,
         ends_at: &str,
-        total: f64,
+        total: i64,
         voided: bool,
     ) {
         let sale_id = format!("sale-{appointment_id}");
@@ -743,13 +739,13 @@ mod tests {
         seed_employee(&conn, "emp-1", "Ana");
         seed_customer(&conn);
         seed_service(&conn, "svc-1");
-        seed_completed_appointment(&conn, "appt-1", "emp-1", "svc-1", "2026-01-10T10:00:00Z", "2026-01-10T11:00:00Z", 100.0, false);
+        seed_completed_appointment(&conn, "appt-1", "emp-1", "svc-1", "2026-01-10T10:00:00Z", "2026-01-10T11:00:00Z", 100, false);
 
         let report = employee_commissions(&mut conn, "month".to_string(), "2026-01-01T00:00:00Z".to_string()).unwrap();
 
         let row = report.rows.iter().find(|r| r.employee_id == "emp-1").unwrap();
         assert_eq!(row.completed_appointments, 1);
-        assert_eq!(row.revenue, 100.0);
+        assert_eq!(row.revenue, 100);
         assert_eq!(row.commission_amount, 0.0, "sin tasa configurada no debe haber comisión");
     }
 
@@ -759,7 +755,7 @@ mod tests {
         seed_employee(&conn, "emp-1", "Ana");
         seed_customer(&conn);
         seed_service(&conn, "svc-1");
-        seed_completed_appointment(&conn, "appt-1", "emp-1", "svc-1", "2026-01-10T10:00:00Z", "2026-01-10T11:00:00Z", 200.0, false);
+        seed_completed_appointment(&conn, "appt-1", "emp-1", "svc-1", "2026-01-10T10:00:00Z", "2026-01-10T11:00:00Z", 200, false);
         set_default_rate(&mut conn, "emp-1", "percentage", 10.0);
 
         let report = employee_commissions(&mut conn, "month".to_string(), "2026-01-01T00:00:00Z".to_string()).unwrap();
@@ -775,7 +771,7 @@ mod tests {
         seed_employee(&conn, "emp-1", "Ana");
         seed_customer(&conn);
         seed_service(&conn, "svc-1");
-        seed_completed_appointment(&conn, "appt-1", "emp-1", "svc-1", "2026-01-10T10:00:00Z", "2026-01-10T11:00:00Z", 200.0, false);
+        seed_completed_appointment(&conn, "appt-1", "emp-1", "svc-1", "2026-01-10T10:00:00Z", "2026-01-10T11:00:00Z", 200, false);
         set_default_rate(&mut conn, "emp-1", "percentage", 10.0);
         crate::repositories::commissions::update_employee_commission_rates(
             &mut conn,
@@ -799,14 +795,14 @@ mod tests {
         seed_employee(&conn, "emp-1", "Ana");
         seed_customer(&conn);
         seed_service(&conn, "svc-1");
-        seed_completed_appointment(&conn, "appt-1", "emp-1", "svc-1", "2026-01-10T10:00:00Z", "2026-01-10T11:00:00Z", 200.0, true);
+        seed_completed_appointment(&conn, "appt-1", "emp-1", "svc-1", "2026-01-10T10:00:00Z", "2026-01-10T11:00:00Z", 200, true);
         set_default_rate(&mut conn, "emp-1", "percentage", 10.0);
 
         let report = employee_commissions(&mut conn, "month".to_string(), "2026-01-01T00:00:00Z".to_string()).unwrap();
 
         let row = report.rows.iter().find(|r| r.employee_id == "emp-1").unwrap();
         assert_eq!(row.completed_appointments, 0);
-        assert_eq!(row.revenue, 0.0);
+        assert_eq!(row.revenue, 0);
         assert_eq!(row.commission_amount, 0.0, "una venta anulada no debe generar comisión");
     }
 
@@ -816,7 +812,7 @@ mod tests {
         seed_employee(&conn, "emp-1", "Ana");
         seed_customer(&conn);
         seed_service(&conn, "svc-1");
-        seed_completed_appointment(&conn, "appt-1", "emp-1", "svc-1", "2025-12-01T10:00:00Z", "2025-12-01T11:00:00Z", 200.0, false);
+        seed_completed_appointment(&conn, "appt-1", "emp-1", "svc-1", "2025-12-01T10:00:00Z", "2025-12-01T11:00:00Z", 200, false);
         set_default_rate(&mut conn, "emp-1", "percentage", 10.0);
 
         let report = employee_commissions(&mut conn, "month".to_string(), "2026-01-01T00:00:00Z".to_string()).unwrap();

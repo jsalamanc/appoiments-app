@@ -56,10 +56,6 @@ pub fn published_catalog(conn: &mut Connection) -> AppResult<PublishedCatalog> {
 // Helpers compartidos del dominio `sales`
 // ---------------------------------------------------------------------------
 
-fn round2(value: f64) -> f64 {
-    (value * 100.0).round() / 100.0
-}
-
 /// Expande los productos incluidos en un paquete (`package_items` con
 /// `item_type = 'product'`) multiplicados por `multiplier` — issue #2, Fase
 /// 5: hasta ahora vender un paquete nunca descontaba el stock de los
@@ -95,7 +91,7 @@ fn add_package_products(
 /// `"mixed"` si la venta se pagó con más de un medio (issue #2, Fase 2).
 /// La suma de los montos debe coincidir exactamente con `total` — nunca se
 /// asume que el frontend mandó el desglose correcto sin verificarlo.
-fn validate_payments(payments: &[PaymentInput], total: f64) -> AppResult<String> {
+fn validate_payments(payments: &[PaymentInput], total: i64) -> AppResult<String> {
     if payments.is_empty() {
         return Err(AppError::validation("Agrega al menos un medio de pago"));
     }
@@ -104,14 +100,14 @@ fn validate_payments(payments: &[PaymentInput], total: f64) -> AppResult<String>
         if !["cash", "transfer", "card"].contains(&payment.method.as_str()) {
             return Err(AppError::validation("Medio de pago inválido"));
         }
-        if payment.amount <= 0.0 {
+        if payment.amount <= 0 {
             return Err(AppError::validation(
                 "El monto de cada medio de pago debe ser mayor a 0",
             ));
         }
         methods.insert(payment.method.as_str());
     }
-    let paid = round2(payments.iter().map(|p| p.amount).sum());
+    let paid: i64 = payments.iter().map(|p| p.amount).sum();
     if paid != total {
         return Err(AppError::validation(
             "La suma de los medios de pago no coincide con el total de la venta",
@@ -127,8 +123,8 @@ fn validate_payments(payments: &[PaymentInput], total: f64) -> AppResult<String>
 /// El descuento se aplica sobre el subtotal ya calculado desde el catálogo
 /// (nunca sobre un total que mande el frontend) — no puede ser negativo ni
 /// mayor al subtotal.
-fn validate_discount(discount_amount: f64, subtotal: f64) -> AppResult<()> {
-    if discount_amount < 0.0 {
+fn validate_discount(discount_amount: i64, subtotal: i64) -> AppResult<()> {
+    if discount_amount < 0 {
         return Err(AppError::validation("El descuento no puede ser negativo"));
     }
     if discount_amount > subtotal {
@@ -215,9 +211,9 @@ pub fn create_with_inventory(
     user_id: Option<String>,
     items: Vec<SaleItemInput>,
     payments: Vec<PaymentInput>,
-    discount_amount: Option<f64>,
+    discount_amount: Option<i64>,
 ) -> AppResult<String> {
-    let discount_amount = discount_amount.unwrap_or(0.0);
+    let discount_amount = discount_amount.unwrap_or(0);
     // --- Validación pura (sin tocar la DB) ---
     if items.is_empty() {
         return Err(AppError::validation("Agrega al menos un ítem a la venta"));
@@ -247,13 +243,13 @@ pub fn create_with_inventory(
     // nombre/precio REAL que se usa para la venta (issue #2: antes se
     // confiaba ciegamente en `item.unit_price`/`item.name`, lo que manda el
     // frontend, sin contrastarlo contra el catálogo).
-    let mut catalog: HashMap<(String, String), (String, f64)> = HashMap::new();
+    let mut catalog: HashMap<(String, String), (String, i64)> = HashMap::new();
     for item in &items {
         let key = (item.item_type.clone(), item.item_id.clone());
         if catalog.contains_key(&key) {
             continue;
         }
-        let found: Option<(String, f64)> = match item.item_type.as_str() {
+        let found: Option<(String, i64)> = match item.item_type.as_str() {
             "product" => tx
                 .query_row(
                     "SELECT name, price FROM products WHERE id = ?1 AND status = 'published'",
@@ -302,17 +298,15 @@ pub fn create_with_inventory(
         }
     }
 
-    let subtotal = round2(
-        items
-            .iter()
-            .map(|item| {
-                let (_, price) = &catalog[&(item.item_type.clone(), item.item_id.clone())];
-                round2(price * item.quantity as f64)
-            })
-            .sum::<f64>(),
-    );
+    let subtotal: i64 = items
+        .iter()
+        .map(|item| {
+            let (_, price) = &catalog[&(item.item_type.clone(), item.item_id.clone())];
+            price * item.quantity
+        })
+        .sum();
     validate_discount(discount_amount, subtotal)?;
-    let total = round2(subtotal - discount_amount);
+    let total = subtotal - discount_amount;
     let payment_method = validate_payments(&payments, total)?;
 
     // Verifica stock suficiente para cada producto distinto, leyendo el stock
@@ -355,7 +349,7 @@ pub fn create_with_inventory(
 
     for item in &items {
         let (name, unit_price) = &catalog[&(item.item_type.clone(), item.item_id.clone())];
-        let line_total = round2(unit_price * item.quantity as f64);
+        let line_total = unit_price * item.quantity;
         let (product_id, service_id, package_id): (
             Option<&str>,
             Option<&str>,
@@ -578,9 +572,9 @@ const BEGINNING_OF_TIME: &str = "0001-01-01T00:00:00Z";
 /// resumen ("mixed" si hubo más de un medio); el desglose real sale de
 /// `sale_payments`.
 fn payment_breakdown(conn: &rusqlite::Connection, from: &str) -> AppResult<PaymentBreakdown> {
-    let mut cash = (0i64, 0f64);
-    let mut transfer = (0i64, 0f64);
-    let mut card = (0i64, 0f64);
+    let mut cash = (0i64, 0i64);
+    let mut transfer = (0i64, 0i64);
+    let mut card = (0i64, 0i64);
 
     let mut stmt = conn.prepare(
         "SELECT sp.method, COUNT(*), COALESCE(SUM(sp.amount), 0)
@@ -594,7 +588,7 @@ fn payment_breakdown(conn: &rusqlite::Connection, from: &str) -> AppResult<Payme
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, i64>(1)?,
-                row.get::<_, f64>(2)?,
+                row.get::<_, i64>(2)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -611,9 +605,9 @@ fn payment_breakdown(conn: &rusqlite::Connection, from: &str) -> AppResult<Payme
         cash_count: cash.0,
         transfer_count: transfer.0,
         card_count: card.0,
-        cash_revenue: round2(cash.1),
-        transfer_revenue: round2(transfer.1),
-        card_revenue: round2(card.1),
+        cash_revenue: cash.1,
+        transfer_revenue: transfer.1,
+        card_revenue: card.1,
     })
 }
 
@@ -632,7 +626,7 @@ pub fn cash_day_summary(conn: &mut Connection, from: String) -> AppResult<CashDa
         sales.push(sale_to_details(conn, sale)?);
     }
 
-    let (sales_count, total_revenue): (i64, f64) = conn.query_row(
+    let (sales_count, total_revenue): (i64, i64) = conn.query_row(
         "SELECT COUNT(*), COALESCE(SUM(total), 0) FROM sales WHERE sold_at >= ?1 AND voided_at IS NULL",
         params![from],
         |row| Ok((row.get(0)?, row.get(1)?)),
@@ -642,7 +636,7 @@ pub fn cash_day_summary(conn: &mut Connection, from: String) -> AppResult<CashDa
     Ok(CashDaySummary {
         sales,
         sales_count,
-        total_revenue: round2(total_revenue),
+        total_revenue,
         payments,
         from,
     })
@@ -661,12 +655,12 @@ pub fn revenue_metrics(
     week_from: String,
     month_from: String,
 ) -> AppResult<RevenueMetrics> {
-    let (sales_count, total_revenue): (i64, f64) = conn.query_row(
+    let (sales_count, total_revenue): (i64, i64) = conn.query_row(
         "SELECT COUNT(*), COALESCE(SUM(total), 0) FROM sales WHERE voided_at IS NULL",
         [],
         |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
-    let revenue_since = |from: &str| -> AppResult<f64> {
+    let revenue_since = |from: &str| -> AppResult<i64> {
         conn.query_row(
             "SELECT COALESCE(SUM(total), 0) FROM sales WHERE sold_at >= ?1 AND voided_at IS NULL",
             params![from],
@@ -684,10 +678,10 @@ pub fn revenue_metrics(
     let all = payment_breakdown(conn, BEGINNING_OF_TIME)?;
 
     Ok(RevenueMetrics {
-        total_revenue: round2(total_revenue),
-        day_revenue: round2(day_revenue),
-        week_revenue: round2(week_revenue),
-        month_revenue: round2(month_revenue),
+        total_revenue,
+        day_revenue,
+        week_revenue,
+        month_revenue,
         sales_count,
         payments: PaymentPeriods { day, week, month, all },
     })
@@ -758,7 +752,7 @@ pub mod postgres {
     use crate::models::service::Service;
     use crate::util::pagination::{get_range, get_total_pages, CATALOG_PAGE_SIZE};
 
-    use super::{round2, validate_discount, validate_payments};
+    use super::{validate_discount, validate_payments};
 
     /// Ver `super::add_package_products` — misma lógica, dialecto Postgres.
     /// Toma `&mut PgConnection` concreto (no genérico sobre `PgExecutor`)
@@ -900,9 +894,9 @@ pub mod postgres {
         user_id: Option<String>,
         items: Vec<SaleItemInput>,
         payments: Vec<PaymentInput>,
-        discount_amount: Option<f64>,
+        discount_amount: Option<i64>,
     ) -> AppResult<String> {
-        let discount_amount = discount_amount.unwrap_or(0.0);
+        let discount_amount = discount_amount.unwrap_or(0);
         if items.is_empty() {
             return Err(AppError::validation("Agrega al menos un ítem a la venta"));
         }
@@ -930,7 +924,7 @@ pub mod postgres {
         // Cada ítem referenciado debe estar publicado — y de acá sale el
         // nombre/precio REAL que se usa para la venta (issue #2: antes se
         // confiaba en `item.unit_price`/`item.name` del frontend).
-        let mut catalog: HashMap<(String, String), (String, f64)> = HashMap::new();
+        let mut catalog: HashMap<(String, String), (String, i64)> = HashMap::new();
         for item in &items {
             let key = (item.item_type.clone(), item.item_id.clone());
             if catalog.contains_key(&key) {
@@ -958,7 +952,7 @@ pub mod postgres {
                 _ => None,
             };
             let found = row
-                .map(|row| -> AppResult<(String, f64)> {
+                .map(|row| -> AppResult<(String, i64)> {
                     Ok((row.try_get("name")?, row.try_get("price")?))
                 })
                 .transpose()?;
@@ -989,17 +983,15 @@ pub mod postgres {
             }
         }
 
-        let subtotal = round2(
-            items
-                .iter()
-                .map(|item| {
-                    let (_, price) = &catalog[&(item.item_type.clone(), item.item_id.clone())];
-                    round2(price * item.quantity as f64)
-                })
-                .sum::<f64>(),
-        );
+        let subtotal: i64 = items
+            .iter()
+            .map(|item| {
+                let (_, price) = &catalog[&(item.item_type.clone(), item.item_id.clone())];
+                price * item.quantity
+            })
+            .sum();
         validate_discount(discount_amount, subtotal)?;
-        let total = round2(subtotal - discount_amount);
+        let total = subtotal - discount_amount;
         let payment_method = validate_payments(&payments, total)?;
 
         for (product_id, needed) in product_qty.iter() {
@@ -1047,7 +1039,7 @@ pub mod postgres {
 
         for item in &items {
             let (name, unit_price) = &catalog[&(item.item_type.clone(), item.item_id.clone())];
-            let line_total = round2(unit_price * item.quantity as f64);
+            let line_total = unit_price * item.quantity;
             let (product_id, service_id, package_id): (Option<&str>, Option<&str>, Option<&str>) =
                 match item.item_type.as_str() {
                     "product" => (Some(item.item_id.as_str()), None, None),
@@ -1251,8 +1243,12 @@ pub mod postgres {
 
     /// Ver `super::payment_breakdown` — misma lógica, dialecto Postgres.
     async fn payment_breakdown(pool: &PgPool, from: time::OffsetDateTime) -> AppResult<PaymentBreakdown> {
+        // `SUM(bigint)` en Postgres devuelve `numeric`, no `bigint` (para no
+        // desbordarse) — se castea de vuelta a `BIGINT` explícitamente para
+        // poder decodificarlo como `i64` sin depender del feature `rust_decimal`
+        // de `sqlx`.
         let rows = sqlx::query(
-            "SELECT sp.method AS method, COUNT(*) AS cnt, COALESCE(SUM(sp.amount), 0) AS revenue
+            "SELECT sp.method AS method, COUNT(*) AS cnt, COALESCE(SUM(sp.amount), 0)::BIGINT AS revenue
              FROM sale_payments sp
              JOIN sales s ON s.id = sp.sale_id
              WHERE s.sold_at >= $1 AND s.voided_at IS NULL
@@ -1262,13 +1258,13 @@ pub mod postgres {
         .fetch_all(pool)
         .await?;
 
-        let mut cash = (0i64, 0f64);
-        let mut transfer = (0i64, 0f64);
-        let mut card = (0i64, 0f64);
+        let mut cash = (0i64, 0i64);
+        let mut transfer = (0i64, 0i64);
+        let mut card = (0i64, 0i64);
         for row in &rows {
             let method: String = row.try_get("method")?;
             let count: i64 = row.try_get("cnt")?;
-            let revenue: f64 = row.try_get("revenue")?;
+            let revenue: i64 = row.try_get("revenue")?;
             match method.as_str() {
                 "cash" => cash = (count, revenue),
                 "transfer" => transfer = (count, revenue),
@@ -1281,9 +1277,9 @@ pub mod postgres {
             cash_count: cash.0,
             transfer_count: transfer.0,
             card_count: card.0,
-            cash_revenue: round2(cash.1),
-            transfer_revenue: round2(transfer.1),
-            card_revenue: round2(card.1),
+            cash_revenue: cash.1,
+            transfer_revenue: transfer.1,
+            card_revenue: card.1,
         })
     }
 
@@ -1302,29 +1298,29 @@ pub mod postgres {
         }
 
         let totals_row = sqlx::query(
-            "SELECT COUNT(*) AS cnt, COALESCE(SUM(total), 0) AS revenue
+            "SELECT COUNT(*) AS cnt, COALESCE(SUM(total), 0)::BIGINT AS revenue
              FROM sales WHERE sold_at >= $1 AND voided_at IS NULL",
         )
         .bind(from_dt)
         .fetch_one(pool)
         .await?;
         let sales_count: i64 = totals_row.try_get("cnt")?;
-        let total_revenue: f64 = totals_row.try_get("revenue")?;
+        let total_revenue: i64 = totals_row.try_get("revenue")?;
 
         let payments = payment_breakdown(pool, from_dt).await?;
 
         Ok(CashDaySummary {
             sales,
             sales_count,
-            total_revenue: round2(total_revenue),
+            total_revenue,
             payments,
             from,
         })
     }
 
-    async fn revenue_since(pool: &PgPool, from: time::OffsetDateTime) -> AppResult<f64> {
-        let revenue: f64 = sqlx::query_scalar(
-            "SELECT COALESCE(SUM(total), 0) FROM sales WHERE sold_at >= $1 AND voided_at IS NULL",
+    async fn revenue_since(pool: &PgPool, from: time::OffsetDateTime) -> AppResult<i64> {
+        let revenue: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(SUM(total), 0)::BIGINT FROM sales WHERE sold_at >= $1 AND voided_at IS NULL",
         )
         .bind(from)
         .fetch_one(pool)
@@ -1343,12 +1339,12 @@ pub mod postgres {
         let month_from = parse_from(&month_from)?;
 
         let totals_row = sqlx::query(
-            "SELECT COUNT(*) AS cnt, COALESCE(SUM(total), 0) AS revenue FROM sales WHERE voided_at IS NULL",
+            "SELECT COUNT(*) AS cnt, COALESCE(SUM(total), 0)::BIGINT AS revenue FROM sales WHERE voided_at IS NULL",
         )
         .fetch_one(pool)
         .await?;
         let sales_count: i64 = totals_row.try_get("cnt")?;
-        let total_revenue: f64 = totals_row.try_get("revenue")?;
+        let total_revenue: i64 = totals_row.try_get("revenue")?;
 
         let day_revenue = revenue_since(pool, day_from).await?;
         let week_revenue = revenue_since(pool, week_from).await?;
@@ -1360,10 +1356,10 @@ pub mod postgres {
         let all = payment_breakdown(pool, time::OffsetDateTime::UNIX_EPOCH).await?;
 
         Ok(RevenueMetrics {
-            total_revenue: round2(total_revenue),
-            day_revenue: round2(day_revenue),
-            week_revenue: round2(week_revenue),
-            month_revenue: round2(month_revenue),
+            total_revenue,
+            day_revenue,
+            week_revenue,
+            month_revenue,
             sales_count,
             payments: PaymentPeriods { day, week, month, all },
         })
@@ -1431,7 +1427,7 @@ mod tests {
         .unwrap();
     }
 
-    fn insert_published_product(conn: &Connection, id: &str, name: &str, price: f64, stock: i64) {
+    fn insert_published_product(conn: &Connection, id: &str, name: &str, price: i64, stock: i64) {
         conn.execute(
             "INSERT INTO products (id, name, price, status, stock)
              VALUES (?1, ?2, ?3, 'published', ?4)",
@@ -1440,14 +1436,14 @@ mod tests {
         .unwrap();
     }
 
-    fn cash_payment(amount: f64) -> Vec<PaymentInput> {
+    fn cash_payment(amount: i64) -> Vec<PaymentInput> {
         vec![PaymentInput {
             method: "cash".to_string(),
             amount,
         }]
     }
 
-    fn product_item(item_id: &str, name: &str, unit_price: f64, quantity: i64) -> SaleItemInput {
+    fn product_item(item_id: &str, name: &str, unit_price: i64, quantity: i64) -> SaleItemInput {
         SaleItemInput {
             item_type: "product".to_string(),
             item_id: item_id.to_string(),
@@ -1465,24 +1461,24 @@ mod tests {
     fn create_with_inventory_ignores_client_supplied_price() {
         let mut conn = open_test_db();
         insert_customer(&conn, "cust-1");
-        insert_published_product(&conn, "prod-1", "Shampoo real", 50.0, 10);
+        insert_published_product(&conn, "prod-1", "Shampoo real", 50, 10);
 
         let sale_id = create_with_inventory(
             &mut conn,
             "cust-1".to_string(),
             None,
-            vec![product_item("prod-1", "Nombre falso", 1.0, 2)],
-            cash_payment(100.0),
+            vec![product_item("prod-1", "Nombre falso", 1, 2)],
+            cash_payment(100),
             None,
         )
         .unwrap();
 
-        let total: f64 = conn
+        let total: i64 = conn
             .query_row("SELECT total FROM sales WHERE id = ?1", params![sale_id], |r| r.get(0))
             .unwrap();
-        assert_eq!(total, 100.0, "debe usar el precio real (50.0 x 2), no el manipulado (1.0 x 2)");
+        assert_eq!(total, 100, "debe usar el precio real (50 x 2), no el manipulado (1 x 2)");
 
-        let (name, unit_price): (String, f64) = conn
+        let (name, unit_price): (String, i64) = conn
             .query_row(
                 "SELECT name_snapshot, unit_price FROM sale_items WHERE sale_id = ?1",
                 params![sale_id],
@@ -1490,7 +1486,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(name, "Shampoo real");
-        assert_eq!(unit_price, 50.0);
+        assert_eq!(unit_price, 50);
 
         let stock: i64 = conn
             .query_row("SELECT stock FROM products WHERE id = 'prod-1'", [], |r| r.get(0))
@@ -1504,7 +1500,7 @@ mod tests {
         insert_customer(&conn, "cust-1");
         conn.execute(
             "INSERT INTO products (id, name, price, status, stock)
-             VALUES ('prod-draft', 'Borrador', 10.0, 'draft', 5)",
+             VALUES ('prod-draft', 'Borrador', 10, 'draft', 5)",
             [],
         )
         .unwrap();
@@ -1513,8 +1509,8 @@ mod tests {
             &mut conn,
             "cust-1".to_string(),
             None,
-            vec![product_item("prod-draft", "Borrador", 10.0, 1)],
-            cash_payment(10.0),
+            vec![product_item("prod-draft", "Borrador", 10, 1)],
+            cash_payment(10),
             None,
         );
 
@@ -1528,18 +1524,18 @@ mod tests {
     fn create_with_inventory_rejects_payments_that_dont_match_total() {
         let mut conn = open_test_db();
         insert_customer(&conn, "cust-1");
-        insert_published_product(&conn, "prod-1", "Shampoo", 50.0, 10);
+        insert_published_product(&conn, "prod-1", "Shampoo", 50, 10);
 
         let result = create_with_inventory(
             &mut conn,
             "cust-1".to_string(),
             None,
-            vec![product_item("prod-1", "Shampoo", 50.0, 1)],
-            cash_payment(30.0),
+            vec![product_item("prod-1", "Shampoo", 50, 1)],
+            cash_payment(30),
             None,
         );
 
-        assert!(result.is_err(), "30.0 pagado no cubre el total de 50.0");
+        assert!(result.is_err(), "30 pagado no cubre el total de 50");
     }
 
     /// Issue #2, Fase 2: pago mixto — varios medios cuya suma sí cubre el
@@ -1548,16 +1544,16 @@ mod tests {
     fn create_with_inventory_accepts_mixed_payment() {
         let mut conn = open_test_db();
         insert_customer(&conn, "cust-1");
-        insert_published_product(&conn, "prod-1", "Shampoo", 100.0, 10);
+        insert_published_product(&conn, "prod-1", "Shampoo", 100, 10);
 
         let sale_id = create_with_inventory(
             &mut conn,
             "cust-1".to_string(),
             None,
-            vec![product_item("prod-1", "Shampoo", 100.0, 1)],
+            vec![product_item("prod-1", "Shampoo", 100, 1)],
             vec![
-                PaymentInput { method: "cash".to_string(), amount: 60.0 },
-                PaymentInput { method: "card".to_string(), amount: 40.0 },
+                PaymentInput { method: "cash".to_string(), amount: 60 },
+                PaymentInput { method: "card".to_string(), amount: 40 },
             ],
             None,
         )
@@ -1588,42 +1584,42 @@ mod tests {
     fn create_with_inventory_applies_discount_to_catalog_subtotal() {
         let mut conn = open_test_db();
         insert_customer(&conn, "cust-1");
-        insert_published_product(&conn, "prod-1", "Shampoo", 100.0, 10);
+        insert_published_product(&conn, "prod-1", "Shampoo", 100, 10);
 
         let sale_id = create_with_inventory(
             &mut conn,
             "cust-1".to_string(),
             None,
-            vec![product_item("prod-1", "Shampoo", 100.0, 1)],
-            cash_payment(90.0),
-            Some(10.0),
+            vec![product_item("prod-1", "Shampoo", 100, 1)],
+            cash_payment(90),
+            Some(10),
         )
         .unwrap();
 
-        let (total, discount): (f64, f64) = conn
+        let (total, discount): (i64, i64) = conn
             .query_row(
                 "SELECT total, discount_amount FROM sales WHERE id = ?1",
                 params![sale_id],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .unwrap();
-        assert_eq!(total, 90.0);
-        assert_eq!(discount, 10.0);
+        assert_eq!(total, 90);
+        assert_eq!(discount, 10);
     }
 
     #[test]
     fn create_with_inventory_rejects_discount_larger_than_subtotal() {
         let mut conn = open_test_db();
         insert_customer(&conn, "cust-1");
-        insert_published_product(&conn, "prod-1", "Shampoo", 50.0, 10);
+        insert_published_product(&conn, "prod-1", "Shampoo", 50, 10);
 
         let result = create_with_inventory(
             &mut conn,
             "cust-1".to_string(),
             None,
-            vec![product_item("prod-1", "Shampoo", 50.0, 1)],
-            cash_payment(0.0),
-            Some(60.0),
+            vec![product_item("prod-1", "Shampoo", 50, 1)],
+            cash_payment(0),
+            Some(60),
         );
 
         assert!(result.is_err(), "el descuento no puede superar el subtotal");
@@ -1635,14 +1631,14 @@ mod tests {
     fn void_sale_reverses_stock_and_marks_voided() {
         let mut conn = open_test_db();
         insert_customer(&conn, "cust-1");
-        insert_published_product(&conn, "prod-1", "Shampoo", 50.0, 10);
+        insert_published_product(&conn, "prod-1", "Shampoo", 50, 10);
 
         let sale_id = create_with_inventory(
             &mut conn,
             "cust-1".to_string(),
             None,
-            vec![product_item("prod-1", "Shampoo", 50.0, 3)],
-            cash_payment(150.0),
+            vec![product_item("prod-1", "Shampoo", 50, 3)],
+            cash_payment(150),
             None,
         )
         .unwrap();
@@ -1674,14 +1670,14 @@ mod tests {
     fn voided_sale_excluded_from_cash_day_summary() {
         let mut conn = open_test_db();
         insert_customer(&conn, "cust-1");
-        insert_published_product(&conn, "prod-1", "Shampoo", 50.0, 10);
+        insert_published_product(&conn, "prod-1", "Shampoo", 50, 10);
 
         let sale_id = create_with_inventory(
             &mut conn,
             "cust-1".to_string(),
             None,
-            vec![product_item("prod-1", "Shampoo", 50.0, 1)],
-            cash_payment(50.0),
+            vec![product_item("prod-1", "Shampoo", 50, 1)],
+            cash_payment(50),
             None,
         )
         .unwrap();
@@ -1689,12 +1685,12 @@ mod tests {
 
         let summary = cash_day_summary(&mut conn, "0001-01-01T00:00:00Z".to_string()).unwrap();
         assert_eq!(summary.sales_count, 0);
-        assert_eq!(summary.total_revenue, 0.0);
+        assert_eq!(summary.total_revenue, 0);
         assert_eq!(summary.payments.cash_count, 0);
         assert_eq!(summary.sales.len(), 1, "la venta anulada se sigue listando, solo no cuenta en los totales");
     }
 
-    fn insert_published_package(conn: &Connection, id: &str, name: &str, price: f64) {
+    fn insert_published_package(conn: &Connection, id: &str, name: &str, price: i64) {
         conn.execute(
             "INSERT INTO packages (id, name, price, status) VALUES (?1, ?2, ?3, 'published')",
             params![id, name, price],
@@ -1711,7 +1707,7 @@ mod tests {
         .unwrap();
     }
 
-    fn package_item(item_id: &str, name: &str, unit_price: f64, quantity: i64) -> SaleItemInput {
+    fn package_item(item_id: &str, name: &str, unit_price: i64, quantity: i64) -> SaleItemInput {
         SaleItemInput {
             item_type: "package".to_string(),
             item_id: item_id.to_string(),
@@ -1728,16 +1724,16 @@ mod tests {
     fn create_with_inventory_deducts_stock_for_products_inside_a_package() {
         let mut conn = open_test_db();
         insert_customer(&conn, "cust-1");
-        insert_published_product(&conn, "prod-1", "Crema", 10.0, 20);
-        insert_published_package(&conn, "pkg-1", "Combo spa", 80.0);
+        insert_published_product(&conn, "prod-1", "Crema", 10, 20);
+        insert_published_package(&conn, "pkg-1", "Combo spa", 80);
         insert_package_product_item(&conn, "pkg-1", "prod-1", 3);
 
         create_with_inventory(
             &mut conn,
             "cust-1".to_string(),
             None,
-            vec![package_item("pkg-1", "Combo spa", 80.0, 2)],
-            cash_payment(160.0),
+            vec![package_item("pkg-1", "Combo spa", 80, 2)],
+            cash_payment(160),
             None,
         )
         .unwrap();
@@ -1761,16 +1757,16 @@ mod tests {
     fn create_with_inventory_rejects_package_sale_with_insufficient_stock() {
         let mut conn = open_test_db();
         insert_customer(&conn, "cust-1");
-        insert_published_product(&conn, "prod-1", "Crema", 10.0, 2);
-        insert_published_package(&conn, "pkg-1", "Combo spa", 80.0);
+        insert_published_product(&conn, "prod-1", "Crema", 10, 2);
+        insert_published_package(&conn, "pkg-1", "Combo spa", 80);
         insert_package_product_item(&conn, "pkg-1", "prod-1", 3);
 
         let result = create_with_inventory(
             &mut conn,
             "cust-1".to_string(),
             None,
-            vec![package_item("pkg-1", "Combo spa", 80.0, 1)],
-            cash_payment(80.0),
+            vec![package_item("pkg-1", "Combo spa", 80, 1)],
+            cash_payment(80),
             None,
         );
 
@@ -1781,8 +1777,8 @@ mod tests {
     fn create_with_inventory_combines_direct_and_package_product_sales() {
         let mut conn = open_test_db();
         insert_customer(&conn, "cust-1");
-        insert_published_product(&conn, "prod-1", "Crema", 10.0, 20);
-        insert_published_package(&conn, "pkg-1", "Combo spa", 80.0);
+        insert_published_product(&conn, "prod-1", "Crema", 10, 20);
+        insert_published_package(&conn, "pkg-1", "Combo spa", 80);
         insert_package_product_item(&conn, "pkg-1", "prod-1", 3);
 
         create_with_inventory(
@@ -1790,10 +1786,10 @@ mod tests {
             "cust-1".to_string(),
             None,
             vec![
-                product_item("prod-1", "Crema", 10.0, 2),
-                package_item("pkg-1", "Combo spa", 80.0, 1),
+                product_item("prod-1", "Crema", 10, 2),
+                package_item("pkg-1", "Combo spa", 80, 1),
             ],
-            cash_payment(100.0),
+            cash_payment(100),
             None,
         )
         .unwrap();
@@ -1810,16 +1806,16 @@ mod tests {
     fn void_sale_reverses_stock_for_products_inside_a_package() {
         let mut conn = open_test_db();
         insert_customer(&conn, "cust-1");
-        insert_published_product(&conn, "prod-1", "Crema", 10.0, 20);
-        insert_published_package(&conn, "pkg-1", "Combo spa", 80.0);
+        insert_published_product(&conn, "prod-1", "Crema", 10, 20);
+        insert_published_package(&conn, "pkg-1", "Combo spa", 80);
         insert_package_product_item(&conn, "pkg-1", "prod-1", 3);
 
         let sale_id = create_with_inventory(
             &mut conn,
             "cust-1".to_string(),
             None,
-            vec![package_item("pkg-1", "Combo spa", 80.0, 2)],
-            cash_payment(160.0),
+            vec![package_item("pkg-1", "Combo spa", 80, 2)],
+            cash_payment(160),
             None,
         )
         .unwrap();

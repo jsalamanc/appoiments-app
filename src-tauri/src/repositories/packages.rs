@@ -137,7 +137,7 @@ fn validate_package_input(input: &PackageInput) -> AppResult<()> {
     if input.name.trim().is_empty() {
         return Err(AppError::validation("El nombre es obligatorio"));
     }
-    if input.price < 0.0 {
+    if input.price < 0 {
         return Err(AppError::validation("El precio no puede ser negativo"));
     }
     if input.status != "draft" && input.status != "published" {

@@ -5,7 +5,7 @@ pub struct Service {
     pub id: String,
     pub name: String,
     pub description: Option<String>,
-    pub price: f64,
+    pub price: i64,
     pub duration_minutes: i64,
     pub photo_path: Option<String>,
     pub status: String,

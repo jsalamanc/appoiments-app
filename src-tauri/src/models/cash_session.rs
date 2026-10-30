@@ -10,12 +10,12 @@ pub struct CashSession {
     pub id: String,
     pub opened_by: Option<String>,
     pub opened_at: String,
-    pub opening_amount: f64,
+    pub opening_amount: i64,
     pub closed_by: Option<String>,
     pub closed_at: Option<String>,
-    pub counted_amount: Option<f64>,
-    pub expected_amount: Option<f64>,
-    pub difference: Option<f64>,
+    pub counted_amount: Option<i64>,
+    pub expected_amount: Option<i64>,
+    pub difference: Option<i64>,
     pub notes: Option<String>,
 }
 

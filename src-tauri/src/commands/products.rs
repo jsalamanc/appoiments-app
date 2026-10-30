@@ -52,8 +52,8 @@ pub async fn get_product(state: State<'_, AppState>, id: String) -> AppResult<Op
 #[serde(rename_all = "camelCase")]
 pub struct ProductInput {
     pub name: String,
-    pub price: f64,
-    pub cost: f64,
+    pub price: i64,
+    pub cost: i64,
     pub photo_path: Option<String>,
     pub status: String,
 }
@@ -157,7 +157,7 @@ pub async fn set_product_stock(
     product_id: String,
     stock: i64,
     note: Option<String>,
-    unit_cost: Option<f64>,
+    unit_cost: Option<i64>,
 ) -> AppResult<i64> {
     state.require_user()?;
     match &state.db {

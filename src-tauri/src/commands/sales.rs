@@ -48,7 +48,7 @@ pub struct SaleItemInput {
     pub item_type: String,
     pub item_id: String,
     pub name: String,
-    pub unit_price: f64,
+    pub unit_price: i64,
     pub quantity: i64,
 }
 
@@ -59,7 +59,7 @@ pub struct SaleItemInput {
 #[derive(Debug, Deserialize)]
 pub struct PaymentInput {
     pub method: String,
-    pub amount: f64,
+    pub amount: i64,
 }
 
 #[tauri::command]
@@ -68,7 +68,7 @@ pub async fn create_sale_with_inventory(
     customer_id: String,
     items: Vec<SaleItemInput>,
     payments: Vec<PaymentInput>,
-    discount_amount: Option<f64>,
+    discount_amount: Option<i64>,
 ) -> AppResult<String> {
     let user_id = state.require_user()?.id;
     match &state.db {
@@ -181,16 +181,16 @@ pub struct PaymentBreakdown {
     pub cash_count: i64,
     pub transfer_count: i64,
     pub card_count: i64,
-    pub cash_revenue: f64,
-    pub transfer_revenue: f64,
-    pub card_revenue: f64,
+    pub cash_revenue: i64,
+    pub transfer_revenue: i64,
+    pub card_revenue: i64,
 }
 
 #[derive(Debug, Serialize)]
 pub struct CashDaySummary {
     pub sales: Vec<SaleWithDetails>,
     pub sales_count: i64,
-    pub total_revenue: f64,
+    pub total_revenue: i64,
     pub payments: PaymentBreakdown,
     pub from: String,
 }
@@ -223,10 +223,10 @@ pub struct PaymentPeriods {
 
 #[derive(Debug, Serialize)]
 pub struct RevenueMetrics {
-    pub total_revenue: f64,
-    pub day_revenue: f64,
-    pub week_revenue: f64,
-    pub month_revenue: f64,
+    pub total_revenue: i64,
+    pub day_revenue: i64,
+    pub week_revenue: i64,
+    pub month_revenue: i64,
     pub sales_count: i64,
     pub payments: PaymentPeriods,
 }

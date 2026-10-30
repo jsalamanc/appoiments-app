@@ -54,9 +54,9 @@ pub struct SaleItemRow {
     pub service_id: Option<String>,
     pub package_id: Option<String>,
     pub name_snapshot: String,
-    pub unit_price: f64,
+    pub unit_price: i64,
     pub quantity: i64,
-    pub line_total: f64,
+    pub line_total: i64,
     pub created_at: String,
 }
 
@@ -66,7 +66,7 @@ pub struct SaleWithDetails {
     pub customer_id: String,
     pub appointment_id: Option<String>,
     pub payment_method: String,
-    pub total: f64,
+    pub total: i64,
     pub sold_at: String,
     pub created_at: String,
     pub customers: CustomerRef,
@@ -85,7 +85,7 @@ pub struct EmployeeRef {
 pub struct ServiceRef {
     pub id: String,
     pub name: String,
-    pub price: f64,
+    pub price: i64,
     pub duration_minutes: i64,
     pub status: String,
 }

@@ -134,13 +134,16 @@ pub fn resolve_rate<'a>(
     rate_map.get(&(employee_id.to_string(), None))
 }
 
-/// Monto de comisión de una cita cuya venta vinculada facturó `sale_total`.
-/// `"percentage"` se calcula sobre `sale_total`; `"fixed"` es un monto plano
-/// por cita, independiente del precio cobrado.
-pub fn commission_amount(rate: &RateValue, sale_total: f64) -> f64 {
+/// Monto de comisión de una cita cuya venta vinculada facturó `sale_total`
+/// (pesos enteros — ver issue #2, Fase 6). `"percentage"` se calcula sobre
+/// `sale_total` y puede dar un resultado fraccionario (ej. 12.5% de
+/// $1.001.000); `"fixed"` es un monto plano por cita, independiente del
+/// precio cobrado. El resultado es solo para reporte, nunca se guarda en la
+/// base de datos, así que queda en `f64` en vez de redondearlo a un entero.
+pub fn commission_amount(rate: &RateValue, sale_total: i64) -> f64 {
     let (rate_type, rate_value) = rate;
     if rate_type == "percentage" {
-        sale_total * rate_value / 100.0
+        sale_total as f64 * rate_value / 100.0
     } else {
         *rate_value
     }
@@ -309,13 +312,13 @@ mod tests {
     #[test]
     fn commission_amount_percentage_applies_over_sale_total() {
         let rate = ("percentage".to_string(), 10.0);
-        assert_eq!(commission_amount(&rate, 200.0), 20.0);
+        assert_eq!(commission_amount(&rate, 200), 20.0);
     }
 
     #[test]
     fn commission_amount_fixed_ignores_sale_total() {
         let rate = ("fixed".to_string(), 7.5);
-        assert_eq!(commission_amount(&rate, 200.0), 7.5);
+        assert_eq!(commission_amount(&rate, 200), 7.5);
     }
 }
 

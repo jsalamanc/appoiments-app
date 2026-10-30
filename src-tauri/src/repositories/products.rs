@@ -64,10 +64,10 @@ pub fn validate_input(input: &ProductInput) -> AppResult<()> {
     if input.name.trim().is_empty() {
         return Err(AppError::validation("El nombre es obligatorio"));
     }
-    if input.price < 0.0 {
+    if input.price < 0 {
         return Err(AppError::validation("El precio no puede ser negativo"));
     }
-    if input.cost < 0.0 {
+    if input.cost < 0 {
         return Err(AppError::validation("El costo no puede ser negativo"));
     }
     if input.status != "draft" && input.status != "published" {
@@ -145,13 +145,13 @@ pub fn set_stock(
     product_id: String,
     stock: i64,
     note: Option<String>,
-    unit_cost: Option<f64>,
+    unit_cost: Option<i64>,
 ) -> AppResult<i64> {
     if stock < 0 {
         return Err(AppError::validation("El stock no puede ser negativo"));
     }
     if let Some(cost) = unit_cost {
-        if cost < 0.0 {
+        if cost < 0 {
             return Err(AppError::validation("El costo no puede ser negativo"));
         }
     }
@@ -392,13 +392,13 @@ pub mod postgres {
         product_id: String,
         stock: i64,
         note: Option<String>,
-        unit_cost: Option<f64>,
+        unit_cost: Option<i64>,
     ) -> AppResult<i64> {
         if stock < 0 {
             return Err(AppError::validation("El stock no puede ser negativo"));
         }
         if let Some(cost) = unit_cost {
-            if cost < 0.0 {
+            if cost < 0 {
                 return Err(AppError::validation("El costo no puede ser negativo"));
             }
         }
@@ -487,7 +487,7 @@ mod tests {
         conn
     }
 
-    fn input(price: f64, cost: f64) -> ProductInput {
+    fn input(price: i64, cost: i64) -> ProductInput {
         ProductInput {
             name: "Shampoo".to_string(),
             price,
@@ -501,16 +501,16 @@ mod tests {
     fn create_stores_cost() {
         let mut conn = open_test_db();
 
-        let product = create(&mut conn, input(50.0, 20.0)).unwrap();
+        let product = create(&mut conn, input(50, 20)).unwrap();
 
-        assert_eq!(product.cost, 20.0);
+        assert_eq!(product.cost, 20);
     }
 
     #[test]
     fn create_rejects_negative_cost() {
         let mut conn = open_test_db();
 
-        let result = create(&mut conn, input(50.0, -1.0));
+        let result = create(&mut conn, input(50, -1));
 
         assert!(result.is_err(), "el costo no puede ser negativo");
     }
@@ -518,32 +518,32 @@ mod tests {
     #[test]
     fn set_stock_updates_cost_when_stock_increases_with_unit_cost() {
         let mut conn = open_test_db();
-        let product = create(&mut conn, input(50.0, 20.0)).unwrap();
+        let product = create(&mut conn, input(50, 20)).unwrap();
 
-        set_stock(&mut conn, product.id.clone(), 10, None, Some(25.0)).unwrap();
+        set_stock(&mut conn, product.id.clone(), 10, None, Some(25)).unwrap();
 
         let updated = get(&mut conn, product.id).unwrap().unwrap();
-        assert_eq!(updated.cost, 25.0, "una entrada de stock con costo debe actualizar el costo del producto");
+        assert_eq!(updated.cost, 25, "una entrada de stock con costo debe actualizar el costo del producto");
     }
 
     #[test]
     fn set_stock_ignores_unit_cost_when_stock_decreases() {
         let mut conn = open_test_db();
-        let product = create(&mut conn, input(50.0, 20.0)).unwrap();
-        set_stock(&mut conn, product.id.clone(), 10, None, Some(25.0)).unwrap();
+        let product = create(&mut conn, input(50, 20)).unwrap();
+        set_stock(&mut conn, product.id.clone(), 10, None, Some(25)).unwrap();
 
-        set_stock(&mut conn, product.id.clone(), 5, None, Some(99.0)).unwrap();
+        set_stock(&mut conn, product.id.clone(), 5, None, Some(99)).unwrap();
 
         let updated = get(&mut conn, product.id).unwrap().unwrap();
-        assert_eq!(updated.cost, 25.0, "una reducción de stock no debe cambiar el costo de reposición");
+        assert_eq!(updated.cost, 25, "una reducción de stock no debe cambiar el costo de reposición");
     }
 
     #[test]
     fn set_stock_rejects_negative_unit_cost() {
         let mut conn = open_test_db();
-        let product = create(&mut conn, input(50.0, 20.0)).unwrap();
+        let product = create(&mut conn, input(50, 20)).unwrap();
 
-        let result = set_stock(&mut conn, product.id, 10, None, Some(-5.0));
+        let result = set_stock(&mut conn, product.id, 10, None, Some(-5));
 
         assert!(result.is_err());
     }
