@@ -42,8 +42,10 @@ const PAYMENT_METHOD_OPTIONS: { value: PaymentMethod; label: string }[] = [
   { value: "card", label: "Tarjeta" },
 ];
 
-function round2(value: number) {
-  return Math.round(value * 100) / 100;
+// Issue #2, Fase 6: el backend guarda el dinero como pesos enteros (sin
+// centavos), así que acá se redondea al peso en vez de a 2 decimales.
+function roundMoney(value: number) {
+  return Math.round(value);
 }
 
 type CatalogOption = {
@@ -283,10 +285,10 @@ export function SaleForm({ prefill }: { prefill?: SaleFormPrefill }) {
   );
 
   const subtotal = cartTotal(cart);
-  const total = round2(Math.max(0, subtotal - discountAmount));
+  const total = roundMoney(Math.max(0, subtotal - discountAmount));
   const canSell = catalogOptions.length > 0;
 
-  const paymentLinesTotal = round2(
+  const paymentLinesTotal = roundMoney(
     paymentLines.reduce((sum, line) => sum + (line.amount || 0), 0)
   );
   const paymentsToSend: PaymentLineInput[] = splitPayment
@@ -843,11 +845,11 @@ export function SaleForm({ prefill }: { prefill?: SaleFormPrefill }) {
               type="number"
               min={0}
               max={subtotal}
-              step="0.01"
+              step="1"
               className="w-32 text-right"
               value={discountAmount || ""}
               onChange={(e) => {
-                const next = Number(e.target.value);
+                const next = Math.round(Number(e.target.value));
                 const safe = Number.isFinite(next) && next >= 0 ? next : 0;
                 setDiscountAmount(Math.min(safe, subtotal));
               }}
@@ -930,11 +932,11 @@ export function SaleForm({ prefill }: { prefill?: SaleFormPrefill }) {
                 <Input
                   type="number"
                   min={0}
-                  step="0.01"
+                  step="1"
                   className="flex-1"
                   value={line.amount || ""}
                   onChange={(e) => {
-                    const next = Number(e.target.value);
+                    const next = Math.round(Number(e.target.value));
                     const amount = Number.isFinite(next) && next >= 0 ? next : 0;
                     setPaymentLines((prev) =>
                       prev.map((l, i) => (i === index ? { ...l, amount } : l))

@@ -53,7 +53,8 @@ export function CashSessionPanel() {
   }, []);
 
   const handleOpen = async () => {
-    const amount = Number(openingAmount);
+    // Issue #2, Fase 6: el backend guarda el dinero como pesos enteros.
+    const amount = Math.round(Number(openingAmount));
     if (!Number.isFinite(amount) || amount < 0) {
       toast.error("Ingresa un monto válido");
       return;
@@ -74,7 +75,7 @@ export function CashSessionPanel() {
 
   const handleClose = async () => {
     if (!session) return;
-    const amount = Number(countedAmount);
+    const amount = Math.round(Number(countedAmount));
     if (!Number.isFinite(amount) || amount < 0) {
       toast.error("Ingresa un monto válido");
       return;

@@ -1,7 +1,12 @@
 import { z } from "zod";
 
+// Issue #2, Fase 6: el backend guarda el dinero como entero (pesos, sin
+// centavos — ver migración 0007_money_as_integers.sql), así que mandar un
+// valor fraccionario ya no es solo impreciso, directamente falla al
+// deserializar el comando de Tauri (`i64` no acepta `99.5`).
 const money = z
   .number({ error: "Precio inválido" })
+  .int("No se admiten centavos, solo pesos enteros")
   .min(0, "Precio inválido");
 
 const quantity = z
