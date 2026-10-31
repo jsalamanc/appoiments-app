@@ -4,7 +4,7 @@ use crate::bucket_config::{self, BucketConfig};
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 use crate::util::bucket::BucketClient;
-use crate::util::photos::cleanup_old_photo;
+use crate::util::photos::{cleanup_old_photo, validate_photo_path};
 
 fn data_dir(app: &AppHandle) -> AppResult<std::path::PathBuf> {
     app.path()
@@ -53,6 +53,7 @@ pub async fn resolve_photo_cache(
     photo_path: String,
 ) -> AppResult<String> {
     state.require_user()?;
+    validate_photo_path(&photo_path)?;
     let data_dir = data_dir(&app)?;
     let local_path = data_dir.join(&photo_path);
     if local_path.exists() {
@@ -88,6 +89,7 @@ pub async fn resolve_photo_cache(
 #[tauri::command]
 pub async fn discard_photo(app: AppHandle, state: State<'_, AppState>, photo_path: String) -> AppResult<()> {
     state.require_user()?;
+    validate_photo_path(&photo_path)?;
     cleanup_old_photo(&data_dir(&app)?, &config_dir(&app)?, &state.db, Some(&photo_path)).await;
     Ok(())
 }
