@@ -22,6 +22,7 @@ import { FadeIn, StaggerChildren, StaggerItem } from "@/components/motion/fade-i
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { type CenterModules, type ModuleKey, DEFAULT_MODULES } from "@/lib/modules";
+import { getPeriodRange } from "@/lib/sales";
 import { cn } from "@/lib/utils";
 
 type StatCard = {
@@ -36,8 +37,10 @@ type StatCard = {
 type PaymentBreakdown = {
   cash_count: number;
   transfer_count: number;
+  card_count: number;
   cash_revenue: number;
   transfer_revenue: number;
+  card_revenue: number;
 };
 
 type RevenueMetricsData = {
@@ -58,8 +61,10 @@ function toPaymentStats(p: PaymentBreakdown) {
   return {
     cashCount: p.cash_count,
     transferCount: p.transfer_count,
+    cardCount: p.card_count,
     cashRevenue: p.cash_revenue,
     transferRevenue: p.transfer_revenue,
+    cardRevenue: p.card_revenue,
   };
 }
 
@@ -90,26 +95,24 @@ export default function AdminDashboardPage() {
       setBusinessName(profile.name);
       setModules(enabledModules);
 
-      const [products, services, packages, employees, appointments, revenueMetrics] =
-        await Promise.all([
-          invoke<{ counts: { all: number } }>("list_products", { pageSize: 1 }),
-          enabledModules.services
-            ? invoke<{ counts: { all: number } }>("list_services", { pageSize: 1 })
-            : Promise.resolve({ counts: { all: 0 } }),
-          enabledModules.packages
-            ? invoke<{ counts: { all: number } }>("list_packages", { pageSize: 1 })
-            : Promise.resolve({ counts: { all: 0 } }),
-          enabledModules.employees
-            ? invoke<unknown[]>("list_employees", {})
-            : Promise.resolve([]),
-          enabledModules.appointments
-            ? invoke<{ status: string }[]>("list_appointments_in_range", {
-                from: FAR_PAST,
-                to: FAR_FUTURE,
-              })
-            : Promise.resolve([]),
-          invoke<RevenueMetricsData>("get_revenue_metrics"),
-        ]);
+      const [products, services, packages, employees, appointments] = await Promise.all([
+        invoke<{ counts: { all: number } }>("list_products", { pageSize: 1 }),
+        enabledModules.services
+          ? invoke<{ counts: { all: number } }>("list_services", { pageSize: 1 })
+          : Promise.resolve({ counts: { all: 0 } }),
+        enabledModules.packages
+          ? invoke<{ counts: { all: number } }>("list_packages", { pageSize: 1 })
+          : Promise.resolve({ counts: { all: 0 } }),
+        enabledModules.employees
+          ? invoke<unknown[]>("list_employees", {})
+          : Promise.resolve([]),
+        enabledModules.appointments
+          ? invoke<{ status: string }[]>("list_appointments_in_range", {
+              from: FAR_PAST,
+              to: FAR_FUTURE,
+            })
+          : Promise.resolve([]),
+      ]);
 
       if (cancelled) return;
       setCounts({
@@ -119,7 +122,20 @@ export default function AdminDashboardPage() {
         employees: employees.length,
         appointments: appointments.filter((a) => a.status === "scheduled").length,
       });
-      setRevenue(revenueMetrics);
+
+      // Solo el dueño puede ver los ingresos (get_revenue_metrics exige
+      // require_owner en el backend) — el staff ve el resto del panel
+      // normalmente, simplemente sin esta tarjeta.
+      try {
+        const revenueMetrics = await invoke<RevenueMetricsData>("get_revenue_metrics", {
+          dayFrom: getPeriodRange("day").from,
+          weekFrom: getPeriodRange("week").from,
+          monthFrom: getPeriodRange("month").from,
+        });
+        if (!cancelled) setRevenue(revenueMetrics);
+      } catch {
+        // Staff: sin permiso para ver ingresos, se omite la tarjeta.
+      }
     })();
 
     return () => {

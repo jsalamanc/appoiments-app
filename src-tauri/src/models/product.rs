@@ -1,10 +1,16 @@
 use serde::{Deserialize, Serialize};
 
+/// Issue #2, Fase 5: `cost` es lo que le cuesta el producto al negocio (no
+/// lo que cobra) — permite calcular margen. Se actualiza manualmente desde
+/// el formulario de producto, igual que `price`; opcionalmente también se
+/// actualiza al registrar una entrada de stock con costo (ver
+/// `repositories::products::set_stock`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Product {
     pub id: String,
     pub name: String,
-    pub price: f64,
+    pub price: i64,
+    pub cost: i64,
     pub photo_path: Option<String>,
     pub status: String,
     pub stock: i64,
@@ -18,6 +24,7 @@ impl Product {
             id: row.get("id")?,
             name: row.get("name")?,
             price: row.get("price")?,
+            cost: row.get("cost")?,
             photo_path: row.get("photo_path")?,
             status: row.get("status")?,
             stock: row.get("stock")?,
@@ -39,6 +46,7 @@ impl Product {
             id: row.try_get("id")?,
             name: row.try_get("name")?,
             price: row.try_get("price")?,
+            cost: row.try_get("cost")?,
             photo_path: row.try_get("photo_path")?,
             status: row.try_get("status")?,
             stock: row.try_get("stock")?,

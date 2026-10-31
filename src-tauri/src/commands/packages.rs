@@ -12,14 +12,14 @@ use crate::util::photos::{cleanup_old_photo, import_and_sync_photo};
 pub struct ProductRef {
     pub id: String,
     pub name: String,
-    pub price: f64,
+    pub price: i64,
 }
 
 #[derive(Debug, Serialize)]
 pub struct ServiceRef {
     pub id: String,
     pub name: String,
-    pub price: f64,
+    pub price: i64,
     pub duration_minutes: i64,
 }
 
@@ -41,7 +41,7 @@ pub struct PackageWithItems {
     pub id: String,
     pub name: String,
     pub description: Option<String>,
-    pub price: f64,
+    pub price: i64,
     pub photo_path: Option<String>,
     pub status: String,
     pub created_at: String,
@@ -67,6 +67,7 @@ pub async fn list_packages(
     page: Option<i64>,
     page_size: Option<i64>,
 ) -> AppResult<ListPackagesResult> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => {
             state
@@ -83,6 +84,7 @@ pub async fn get_package(
     state: State<'_, AppState>,
     id: String,
 ) -> AppResult<Option<PackageWithItems>> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => state.db.with_sqlite(move |conn| repo::get(conn, id)).await,
         AppDb::Postgres(pool) => repo::postgres::get(pool, id).await,
@@ -102,7 +104,7 @@ pub struct PackageItemInput {
 pub struct PackageInput {
     pub name: String,
     pub description: Option<String>,
-    pub price: f64,
+    pub price: i64,
     pub photo_path: Option<String>,
     pub status: String,
     pub items: Vec<PackageItemInput>,
@@ -113,6 +115,7 @@ pub async fn create_package(
     state: State<'_, AppState>,
     input: PackageInput,
 ) -> AppResult<PackageWithItems> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => {
             state
@@ -133,6 +136,7 @@ pub async fn update_package(
     id: String,
     input: PackageInput,
 ) -> AppResult<PackageWithItems> {
+    state.require_user()?;
     let old_photo_path = match &state.db {
         AppDb::Sqlite(_) => {
             let id = id.clone();
@@ -168,6 +172,7 @@ pub async fn update_package(
 /// de confirmar el `DELETE` (issue #18).
 #[tauri::command]
 pub async fn delete_package(app: AppHandle, state: State<'_, AppState>, id: String) -> AppResult<()> {
+    state.require_user()?;
     let old_photo_path = match &state.db {
         AppDb::Sqlite(_) => {
             let id = id.clone();
@@ -197,6 +202,7 @@ pub async fn import_package_photo(
     package_id: String,
     source_file_path: String,
 ) -> AppResult<String> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => {
             state

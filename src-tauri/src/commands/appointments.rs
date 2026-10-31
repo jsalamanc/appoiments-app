@@ -15,6 +15,7 @@ pub async fn list_appointments_in_range(
     to: String,
     employee_id: Option<String>,
 ) -> AppResult<Vec<AppointmentWithDetails>> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => {
             state
@@ -26,6 +27,16 @@ pub async fn list_appointments_in_range(
     }
 }
 
+/// `local_weekday`/`local_start_minutes` describen `starts_at` en la hora
+/// LOCAL de quien agenda (domingo=0..sábado=6, minutos desde medianoche) —
+/// el frontend ya tiene un `Date` en hora local antes de convertir
+/// `starts_at` a UTC para enviarlo (ver `appointment-form-dialog.tsx`), así
+/// que se manda ya resuelto en vez de reimplementar el cálculo de huso
+/// horario en Rust (mismo criterio que la Fase 1 con `period_from`: el
+/// backend no debe adivinar la zona horaria del proceso). El backend asume
+/// que una cita no cruza la medianoche local para derivar la hora de fin a
+/// partir de `local_start_minutes + duration_minutes`, sin volver a
+/// convertir `ends_at` (ver `repositories::appointments::create`).
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppointmentInput {
@@ -34,6 +45,8 @@ pub struct AppointmentInput {
     pub service_id: String,
     pub starts_at: String,
     pub notes: Option<String>,
+    pub local_weekday: i64,
+    pub local_start_minutes: i64,
 }
 
 #[tauri::command]
@@ -41,6 +54,7 @@ pub async fn create_appointment(
     state: State<'_, AppState>,
     input: AppointmentInput,
 ) -> AppResult<Appointment> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => state.db.with_sqlite(move |conn| repo::create(conn, input)).await,
         AppDb::Postgres(pool) => repo::postgres::create(pool, input).await,
@@ -53,6 +67,7 @@ pub async fn update_appointment(
     id: String,
     input: AppointmentInput,
 ) -> AppResult<Appointment> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => {
             state
@@ -70,6 +85,7 @@ pub async fn set_appointment_status(
     appointment_id: String,
     status: String,
 ) -> AppResult<Appointment> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => {
             state
@@ -94,6 +110,7 @@ pub async fn complete_appointment_with_sale(
     appointment_id: String,
     sale_id: String,
 ) -> AppResult<()> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => {
             state
@@ -106,15 +123,16 @@ pub async fn complete_appointment_with_sale(
 }
 
 /// Lectura mínima y de solo lectura para el selector de servicio del
-/// formulario de citas (dominio `appointments`). El dominio `services`
-/// (propiedad de otro ingeniero, fuera de este alcance) definirá su propio
-/// `list_services` paginado más adelante; este comando es intencionalmente
-/// independiente (nombre distinto, sin paginar) para no bloquear `employees`
-/// + `appointments` en ese trabajo paralelo. Ver reporte final para detalles.
+/// formulario de citas (dominio `appointments`). `commands::services::list_services`
+/// (dominio `services`) ya existe, pero pagina y también devuelve borradores;
+/// este comando se queda separado e intencionalmente simple (sin paginar,
+/// solo publicados) porque es todo lo que necesita el selector del
+/// formulario de citas.
 #[tauri::command]
 pub async fn list_published_services_for_appointments(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<ServiceRef>> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => state.db.with_sqlite(repo::list_published_services).await,
         AppDb::Postgres(pool) => repo::postgres::list_published_services(pool).await,

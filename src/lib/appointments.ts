@@ -85,6 +85,8 @@ export async function createAppointment(input: {
   serviceId: string;
   startsAt: string;
   notes?: string;
+  localWeekday: number;
+  localStartMinutes: number;
 }) {
   return invoke<AppointmentWithDetails>("create_appointment", {
     input: {
@@ -93,6 +95,8 @@ export async function createAppointment(input: {
       serviceId: input.serviceId,
       startsAt: input.startsAt,
       notes: input.notes ?? null,
+      localWeekday: input.localWeekday,
+      localStartMinutes: input.localStartMinutes,
     },
   });
 }
@@ -104,6 +108,8 @@ export async function updateAppointment(input: {
   serviceId: string;
   startsAt: string;
   notes?: string;
+  localWeekday: number;
+  localStartMinutes: number;
 }) {
   return invoke<AppointmentWithDetails>("update_appointment", {
     id: input.appointmentId,
@@ -113,6 +119,8 @@ export async function updateAppointment(input: {
       serviceId: input.serviceId,
       startsAt: input.startsAt,
       notes: input.notes ?? null,
+      localWeekday: input.localWeekday,
+      localStartMinutes: input.localStartMinutes,
     },
   });
 }

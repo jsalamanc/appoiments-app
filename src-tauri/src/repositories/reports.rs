@@ -1,11 +1,13 @@
+use std::collections::HashMap;
+
 use rusqlite::{params, Connection};
 
 use crate::commands::reports::{
-    EmployeePerformanceReport, EmployeePerformanceRow, NoShowCustomerRow, NoShowsReport,
-    RecentCustomerRef, RecentNoShowRow, TopServiceRow, TopServicesReport,
+    EmployeeCommissionRow, EmployeeCommissionsReport, EmployeePerformanceReport,
+    EmployeePerformanceRow, NoShowCustomerRow, NoShowsReport, RecentCustomerRef,
+    RecentNoShowRow, TopServiceRow, TopServicesReport,
 };
 use crate::error::AppResult;
-use crate::util::period::period_from;
 
 /// Puerto de `getEmployeePerformance` (src/lib/reports-server.ts).
 ///
@@ -14,12 +16,13 @@ use crate::util::period::period_from;
 /// `EmployeePerformanceRow`), así que esta consulta tampoco filtra —
 /// replica el comportamiento real observado, no la descripción informal
 /// de "solo empleados activos".
+/// `from` ya viene calculado por el frontend (medianoche local calendario
+/// del período pedido, ver `repositories::sales::cash_day_summary`).
 pub fn employee_performance(
     conn: &mut Connection,
     period: String,
+    from: String,
 ) -> AppResult<EmployeePerformanceReport> {
-    let from = period_from(&period);
-
     let mut stmt = conn.prepare(
         "SELECT
             e.id AS employee_id,
@@ -34,7 +37,7 @@ pub fn employee_performance(
          FROM employees e
          LEFT JOIN appointments a
             ON a.employee_id = e.id AND a.starts_at >= ?1
-         LEFT JOIN sales s ON s.id = a.sale_id
+         LEFT JOIN sales s ON s.id = a.sale_id AND s.voided_at IS NULL
          GROUP BY e.id, e.name, e.color
          ORDER BY completed DESC, revenue DESC, e.name ASC",
     )?;
@@ -58,6 +61,97 @@ pub fn employee_performance(
     Ok(EmployeePerformanceReport { period, from, rows })
 }
 
+/// Issue #22 / #2 Fase 4: comisión por empleado sobre las citas completadas
+/// cuya venta vinculada no esté anulada — mismo universo de citas que
+/// `employee_performance` (`a.status = 'completed'`, `a.starts_at >= from`,
+/// `s.voided_at IS NULL`), pero resolviendo la tasa de comisión (excepción
+/// por servicio si existe, si no la general del empleado, si no ninguna) y
+/// calculando el monto en Rust en vez de SQL — con solo tres tipos de tasa
+/// posibles por cita (sin tasa / porcentaje / fijo) hacerlo en SQL exigiría
+/// un CASE anidado difícil de leer para un beneficio de rendimiento
+/// irrelevante en esta escala (negocio pequeño, tabla de tasas minúscula).
+pub fn employee_commissions(
+    conn: &mut Connection,
+    period: String,
+    from: String,
+) -> AppResult<EmployeeCommissionsReport> {
+    let employees: Vec<(String, String, String)> = {
+        let mut stmt = conn.prepare("SELECT id, name, color FROM employees")?;
+        let rows = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+            .collect::<Result<Vec<_>, _>>()?;
+        rows
+    };
+
+    let rate_map = crate::repositories::commissions::load_rate_map(conn)?;
+
+    let mut stats: HashMap<String, (i64, i64)> = HashMap::new();
+    let mut commission: HashMap<String, f64> = HashMap::new();
+    {
+        let mut stmt = conn.prepare(
+            "SELECT a.employee_id, a.service_id, s.total
+             FROM appointments a
+             JOIN sales s ON s.id = a.sale_id AND s.voided_at IS NULL
+             WHERE a.status = 'completed' AND a.starts_at >= ?1",
+        )?;
+        let rows = stmt.query_map(params![from], |row| {
+            let employee_id: String = row.get(0)?;
+            let service_id: Option<String> = row.get(1)?;
+            let sale_total: i64 = row.get(2)?;
+            Ok((employee_id, service_id, sale_total))
+        })?;
+
+        for row in rows {
+            let (employee_id, service_id, sale_total) = row?;
+            let entry = stats.entry(employee_id.clone()).or_insert((0, 0));
+            entry.0 += 1;
+            entry.1 += sale_total;
+
+            if let Some(rate) = crate::repositories::commissions::resolve_rate(
+                &rate_map,
+                &employee_id,
+                service_id.as_deref(),
+            ) {
+                let amount = crate::repositories::commissions::commission_amount(rate, sale_total);
+                *commission.entry(employee_id).or_insert(0.0) += amount;
+            }
+        }
+    }
+
+    let mut rows: Vec<EmployeeCommissionRow> = employees
+        .into_iter()
+        .map(|(id, name, color)| {
+            let (completed_appointments, revenue) = stats.get(&id).copied().unwrap_or((0, 0));
+            let commission_amount = commission.get(&id).copied().unwrap_or(0.0);
+            EmployeeCommissionRow {
+                employee_id: id,
+                name,
+                color,
+                completed_appointments,
+                revenue,
+                commission_amount,
+            }
+        })
+        .collect();
+
+    rows.sort_by(|a, b| {
+        b.commission_amount
+            .partial_cmp(&a.commission_amount)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| b.revenue.cmp(&a.revenue))
+            .then_with(|| a.name.cmp(&b.name))
+    });
+
+    let total_commission = rows.iter().map(|r| r.commission_amount).sum();
+
+    Ok(EmployeeCommissionsReport {
+        period,
+        from,
+        total_commission,
+        rows,
+    })
+}
+
 /// Puerto de `getTopServicesReport` (src/lib/reports-server.ts).
 ///
 /// `salesCount`/`totalRevenue`/`averageTicket` se calculan sobre TODAS las
@@ -72,11 +166,13 @@ pub fn employee_performance(
 /// retorno de Postgres (no determinista). Aquí se usa `MIN(name_snapshot)`
 /// para un resultado determinista; la agrupación/cantidad/ingresos son
 /// idénticos.
-pub fn top_services(conn: &mut Connection, period: String) -> AppResult<TopServicesReport> {
-    let from = period_from(&period);
-
-    let (sales_count, total_revenue): (i64, f64) = conn.query_row(
-        "SELECT COUNT(*), COALESCE(SUM(total), 0.0) FROM sales WHERE sold_at >= ?1",
+pub fn top_services(
+    conn: &mut Connection,
+    period: String,
+    from: String,
+) -> AppResult<TopServicesReport> {
+    let (sales_count, total_revenue): (i64, i64) = conn.query_row(
+        "SELECT COUNT(*), COALESCE(SUM(total), 0) FROM sales WHERE sold_at >= ?1 AND voided_at IS NULL",
         params![from],
         |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
@@ -84,7 +180,7 @@ pub fn top_services(conn: &mut Connection, period: String) -> AppResult<TopServi
     let average_ticket = if sales_count == 0 {
         0.0
     } else {
-        total_revenue / sales_count as f64
+        total_revenue as f64 / sales_count as f64
     };
 
     let mut stmt = conn.prepare(
@@ -95,7 +191,7 @@ pub fn top_services(conn: &mut Connection, period: String) -> AppResult<TopServi
             SUM(si.line_total) AS revenue
          FROM sale_items si
          JOIN sales s ON s.id = si.sale_id
-         WHERE si.item_type = 'service' AND s.sold_at >= ?1
+         WHERE si.item_type = 'service' AND s.sold_at >= ?1 AND s.voided_at IS NULL
          GROUP BY COALESCE(si.service_id, si.name_snapshot)
          ORDER BY quantity DESC, revenue DESC",
     )?;
@@ -132,9 +228,11 @@ pub fn top_services(conn: &mut Connection, period: String) -> AppResult<TopServi
 /// vía RLS/Postgrest) aquí el `JOIN` con `customers` siempre encuentra
 /// fila — `customers` en la respuesta es `Option` solo para igualar el
 /// tipo del frontend, pero siempre viene `Some`.
-pub fn no_shows(conn: &mut Connection, period: String) -> AppResult<NoShowsReport> {
-    let from = period_from(&period);
-
+pub fn no_shows(
+    conn: &mut Connection,
+    period: String,
+    from: String,
+) -> AppResult<NoShowsReport> {
     let (no_show_total, cancelled_total): (i64, i64) = conn.query_row(
         "SELECT
             COUNT(CASE WHEN status = 'no_show' THEN 1 END),
@@ -149,7 +247,7 @@ pub fn no_shows(conn: &mut Connection, period: String) -> AppResult<NoShowsRepor
         "SELECT
             c.id AS customer_id,
             c.name AS name,
-            c.email AS email,
+            COALESCE(c.email, '') AS email,
             c.phone AS phone,
             COUNT(CASE WHEN a.status = 'no_show' THEN 1 END) AS no_show_count,
             COUNT(CASE WHEN a.status = 'cancelled' THEN 1 END) AS cancelled_count,
@@ -181,7 +279,7 @@ pub fn no_shows(conn: &mut Connection, period: String) -> AppResult<NoShowsRepor
             a.starts_at AS starts_at,
             c.id AS cust_id,
             c.name AS cust_name,
-            c.email AS cust_email,
+            COALESCE(c.email, '') AS cust_email,
             c.phone AS cust_phone
          FROM appointments a
          JOIN customers c ON c.id = a.customer_id
@@ -219,34 +317,37 @@ pub fn no_shows(conn: &mut Connection, period: String) -> AppResult<NoShowsRepor
 /// que arriba, adaptada al driver async `sqlx`.
 ///
 /// IMPORTANTE: `starts_at`/`sold_at` son `TIMESTAMPTZ` en Postgres (no texto
-/// como en SQLite), así que comparar contra la cadena RFC3339 de
-/// `period_from` requiere parsearla primero a `time::OffsetDateTime` y
-/// bindearla nativamente — nunca castear la columna a texto
+/// como en SQLite), así que comparar contra la cadena RFC3339 que manda el
+/// frontend como `from` requiere parsearla primero a `time::OffsetDateTime`
+/// y bindearla nativamente — nunca castear la columna a texto
 /// (`col::text >= $1`), porque la representación textual por defecto de
 /// Postgres para `timestamptz` ("2024-01-15 10:30:00+00") no es RFC3339 y una
 /// comparación lexicográfica contra ella no es confiablemente equivalente a
 /// una comparación cronológica.
 pub mod postgres {
+    use std::collections::HashMap;
+
     use sqlx::{PgPool, Row};
 
     use crate::commands::reports::{
-        EmployeePerformanceReport, EmployeePerformanceRow, NoShowCustomerRow, NoShowsReport,
-        RecentCustomerRef, RecentNoShowRow, TopServiceRow, TopServicesReport,
+        EmployeeCommissionRow, EmployeeCommissionsReport, EmployeePerformanceReport,
+        EmployeePerformanceRow, NoShowCustomerRow, NoShowsReport, RecentCustomerRef,
+        RecentNoShowRow, TopServiceRow, TopServicesReport,
     };
     use crate::db::format_pg_timestamp;
     use crate::error::{AppError, AppResult};
 
-    fn parse_period(period: &str) -> AppResult<time::OffsetDateTime> {
-        let raw = crate::util::period::period_from(period);
-        time::OffsetDateTime::parse(&raw, &time::format_description::well_known::Rfc3339)
+    fn parse_from(from: &str) -> AppResult<time::OffsetDateTime> {
+        time::OffsetDateTime::parse(from, &time::format_description::well_known::Rfc3339)
             .map_err(|e| AppError::Internal(e.to_string()))
     }
 
     pub async fn employee_performance(
         pool: &PgPool,
         period: String,
+        from: String,
     ) -> AppResult<EmployeePerformanceReport> {
-        let from = parse_period(&period)?;
+        let from = parse_from(&from)?;
 
         let rows = sqlx::query(
             "SELECT
@@ -258,11 +359,11 @@ pub mod postgres {
                 COUNT(CASE WHEN a.status = 'cancelled' THEN 1 END) AS cancelled,
                 COUNT(CASE WHEN a.status = 'no_show' THEN 1 END) AS no_show,
                 COUNT(a.id) AS total_appointments,
-                COALESCE(SUM(s.total), 0.0) AS revenue
+                COALESCE(SUM(s.total), 0)::BIGINT AS revenue
              FROM employees e
              LEFT JOIN appointments a
                 ON a.employee_id = e.id AND a.starts_at >= $1
-             LEFT JOIN sales s ON s.id = a.sale_id
+             LEFT JOIN sales s ON s.id = a.sale_id AND s.voided_at IS NULL
              GROUP BY e.id, e.name, e.color
              ORDER BY completed DESC, revenue DESC, e.name ASC",
         )
@@ -294,23 +395,116 @@ pub mod postgres {
         })
     }
 
-    pub async fn top_services(pool: &PgPool, period: String) -> AppResult<TopServicesReport> {
-        let from = parse_period(&period)?;
+    /// Ver `super::employee_commissions` — misma lógica, dialecto Postgres.
+    pub async fn employee_commissions(
+        pool: &PgPool,
+        period: String,
+        from: String,
+    ) -> AppResult<EmployeeCommissionsReport> {
+        let from_ts = parse_from(&from)?;
+
+        let employees = sqlx::query("SELECT id, name, color FROM employees")
+            .fetch_all(pool)
+            .await?;
+        let employees = employees
+            .iter()
+            .map(|row| -> AppResult<(String, String, String)> {
+                Ok((
+                    row.try_get("id")?,
+                    row.try_get("name")?,
+                    row.try_get("color")?,
+                ))
+            })
+            .collect::<AppResult<Vec<_>>>()?;
+
+        let rate_map = crate::repositories::commissions::postgres::load_rate_map(pool).await?;
+
+        let appointment_rows = sqlx::query(
+            "SELECT a.employee_id, a.service_id, s.total
+             FROM appointments a
+             JOIN sales s ON s.id = a.sale_id AND s.voided_at IS NULL
+             WHERE a.status = 'completed' AND a.starts_at >= $1",
+        )
+        .bind(from_ts)
+        .fetch_all(pool)
+        .await?;
+
+        let mut stats: HashMap<String, (i64, i64)> = HashMap::new();
+        let mut commission: HashMap<String, f64> = HashMap::new();
+        for row in &appointment_rows {
+            let employee_id: String = row.try_get("employee_id")?;
+            let service_id: Option<String> = row.try_get("service_id")?;
+            let sale_total: i64 = row.try_get("total")?;
+
+            let entry = stats.entry(employee_id.clone()).or_insert((0, 0));
+            entry.0 += 1;
+            entry.1 += sale_total;
+
+            if let Some(rate) = crate::repositories::commissions::resolve_rate(
+                &rate_map,
+                &employee_id,
+                service_id.as_deref(),
+            ) {
+                let amount = crate::repositories::commissions::commission_amount(rate, sale_total);
+                *commission.entry(employee_id).or_insert(0.0) += amount;
+            }
+        }
+
+        let mut rows: Vec<EmployeeCommissionRow> = employees
+            .into_iter()
+            .map(|(id, name, color)| {
+                let (completed_appointments, revenue) = stats.get(&id).copied().unwrap_or((0, 0));
+                let commission_amount = commission.get(&id).copied().unwrap_or(0.0);
+                EmployeeCommissionRow {
+                    employee_id: id,
+                    name,
+                    color,
+                    completed_appointments,
+                    revenue,
+                    commission_amount,
+                }
+            })
+            .collect();
+
+        rows.sort_by(|a, b| {
+            b.commission_amount
+                .partial_cmp(&a.commission_amount)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| b.revenue.cmp(&a.revenue))
+                .then_with(|| a.name.cmp(&b.name))
+        });
+
+        let total_commission = rows.iter().map(|r| r.commission_amount).sum();
+
+        Ok(EmployeeCommissionsReport {
+            period,
+            from: format_pg_timestamp(from_ts),
+            total_commission,
+            rows,
+        })
+    }
+
+    pub async fn top_services(
+        pool: &PgPool,
+        period: String,
+        from: String,
+    ) -> AppResult<TopServicesReport> {
+        let from = parse_from(&from)?;
 
         let totals_row = sqlx::query(
-            "SELECT COUNT(*) AS sales_count, COALESCE(SUM(total), 0.0) AS total_revenue
-             FROM sales WHERE sold_at >= $1",
+            "SELECT COUNT(*) AS sales_count, COALESCE(SUM(total), 0)::BIGINT AS total_revenue
+             FROM sales WHERE sold_at >= $1 AND voided_at IS NULL",
         )
         .bind(from)
         .fetch_one(pool)
         .await?;
         let sales_count: i64 = totals_row.try_get("sales_count")?;
-        let total_revenue: f64 = totals_row.try_get("total_revenue")?;
+        let total_revenue: i64 = totals_row.try_get("total_revenue")?;
 
         let average_ticket = if sales_count == 0 {
             0.0
         } else {
-            total_revenue / sales_count as f64
+            total_revenue as f64 / sales_count as f64
         };
 
         // A diferencia de SQLite, Postgres exige que toda columna en el
@@ -324,10 +518,10 @@ pub mod postgres {
                 MIN(si.service_id) AS service_id,
                 MIN(si.name_snapshot) AS name,
                 SUM(si.quantity) AS quantity,
-                SUM(si.line_total) AS revenue
+                SUM(si.line_total)::BIGINT AS revenue
              FROM sale_items si
              JOIN sales s ON s.id = si.sale_id
-             WHERE si.item_type = 'service' AND s.sold_at >= $1
+             WHERE si.item_type = 'service' AND s.sold_at >= $1 AND s.voided_at IS NULL
              GROUP BY COALESCE(si.service_id, si.name_snapshot)
              ORDER BY quantity DESC, revenue DESC",
         )
@@ -357,8 +551,12 @@ pub mod postgres {
         })
     }
 
-    pub async fn no_shows(pool: &PgPool, period: String) -> AppResult<NoShowsReport> {
-        let from = parse_period(&period)?;
+    pub async fn no_shows(
+        pool: &PgPool,
+        period: String,
+        from: String,
+    ) -> AppResult<NoShowsReport> {
+        let from = parse_from(&from)?;
 
         let totals_row = sqlx::query(
             "SELECT
@@ -377,7 +575,7 @@ pub mod postgres {
             "SELECT
                 c.id AS customer_id,
                 c.name AS name,
-                c.email AS email,
+                COALESCE(c.email, '') AS email,
                 c.phone AS phone,
                 COUNT(CASE WHEN a.status = 'no_show' THEN 1 END) AS no_show_count,
                 COUNT(CASE WHEN a.status = 'cancelled' THEN 1 END) AS cancelled_count,
@@ -414,7 +612,7 @@ pub mod postgres {
                 a.starts_at AS starts_at,
                 c.id AS cust_id,
                 c.name AS cust_name,
-                c.email AS cust_email,
+                COALESCE(c.email, '') AS cust_email,
                 c.phone AS cust_phone
              FROM appointments a
              JOIN customers c ON c.id = a.customer_id
@@ -452,5 +650,174 @@ pub mod postgres {
             rows,
             recent,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::commissions::CommissionRateInput;
+
+    fn open_test_db() -> Connection {
+        let mut conn = Connection::open_in_memory().unwrap();
+        crate::db::migrations().to_latest(&mut conn).unwrap();
+        conn
+    }
+
+    fn seed_employee(conn: &Connection, id: &str, name: &str) {
+        conn.execute(
+            "INSERT INTO employees (id, name, color, active) VALUES (?1, ?2, '#fff', 1)",
+            params![id, name],
+        )
+        .unwrap();
+    }
+
+    fn seed_customer(conn: &Connection) {
+        conn.execute(
+            "INSERT INTO customers (id, name, phone, email, document)
+             VALUES ('cust-1', 'Cliente', '3000000000', 'cliente@test.com', 'DOC-1')",
+            [],
+        )
+        .unwrap();
+    }
+
+    fn seed_service(conn: &Connection, id: &str) {
+        conn.execute(
+            "INSERT INTO services (id, name, price, duration_minutes, status)
+             VALUES (?1, 'Corte', 20, 60, 'published')",
+            params![id],
+        )
+        .unwrap();
+    }
+
+    /// Crea una cita completada con una venta vinculada no anulada por
+    /// `total`, igual al único camino de atribución de ingresos a un
+    /// empleado que existe hoy (`appointments.employee_id` ->
+    /// `appointments.sale_id` -> `sales.total`, ver `employee_performance`).
+    fn seed_completed_appointment(
+        conn: &Connection,
+        appointment_id: &str,
+        employee_id: &str,
+        service_id: &str,
+        starts_at: &str,
+        ends_at: &str,
+        total: i64,
+        voided: bool,
+    ) {
+        let sale_id = format!("sale-{appointment_id}");
+        conn.execute(
+            "INSERT INTO sales (id, customer_id, payment_method, total, voided_at)
+             VALUES (?1, 'cust-1', 'cash', ?2, ?3)",
+            params![sale_id, total, if voided { Some("2026-01-01T00:00:00Z") } else { None }],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO appointments
+                (id, employee_id, customer_id, service_id, service_name_snapshot, starts_at, ends_at, status, sale_id)
+             VALUES (?1, ?2, 'cust-1', ?3, 'Corte', ?4, ?5, 'completed', ?6)",
+            params![appointment_id, employee_id, service_id, starts_at, ends_at, sale_id],
+        )
+        .unwrap();
+    }
+
+    fn set_default_rate(conn: &mut Connection, employee_id: &str, rate_type: &str, rate_value: f64) {
+        crate::repositories::commissions::update_employee_commission_rates(
+            conn,
+            employee_id.to_string(),
+            vec![CommissionRateInput {
+                service_id: None,
+                rate_type: rate_type.to_string(),
+                rate_value,
+            }],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn employee_commissions_is_zero_without_configured_rate() {
+        let mut conn = open_test_db();
+        seed_employee(&conn, "emp-1", "Ana");
+        seed_customer(&conn);
+        seed_service(&conn, "svc-1");
+        seed_completed_appointment(&conn, "appt-1", "emp-1", "svc-1", "2026-01-10T10:00:00Z", "2026-01-10T11:00:00Z", 100, false);
+
+        let report = employee_commissions(&mut conn, "month".to_string(), "2026-01-01T00:00:00Z".to_string()).unwrap();
+
+        let row = report.rows.iter().find(|r| r.employee_id == "emp-1").unwrap();
+        assert_eq!(row.completed_appointments, 1);
+        assert_eq!(row.revenue, 100);
+        assert_eq!(row.commission_amount, 0.0, "sin tasa configurada no debe haber comisión");
+    }
+
+    #[test]
+    fn employee_commissions_applies_default_percentage_rate() {
+        let mut conn = open_test_db();
+        seed_employee(&conn, "emp-1", "Ana");
+        seed_customer(&conn);
+        seed_service(&conn, "svc-1");
+        seed_completed_appointment(&conn, "appt-1", "emp-1", "svc-1", "2026-01-10T10:00:00Z", "2026-01-10T11:00:00Z", 200, false);
+        set_default_rate(&mut conn, "emp-1", "percentage", 10.0);
+
+        let report = employee_commissions(&mut conn, "month".to_string(), "2026-01-01T00:00:00Z".to_string()).unwrap();
+
+        let row = report.rows.iter().find(|r| r.employee_id == "emp-1").unwrap();
+        assert_eq!(row.commission_amount, 20.0);
+        assert_eq!(report.total_commission, 20.0);
+    }
+
+    #[test]
+    fn employee_commissions_service_override_takes_precedence() {
+        let mut conn = open_test_db();
+        seed_employee(&conn, "emp-1", "Ana");
+        seed_customer(&conn);
+        seed_service(&conn, "svc-1");
+        seed_completed_appointment(&conn, "appt-1", "emp-1", "svc-1", "2026-01-10T10:00:00Z", "2026-01-10T11:00:00Z", 200, false);
+        set_default_rate(&mut conn, "emp-1", "percentage", 10.0);
+        crate::repositories::commissions::update_employee_commission_rates(
+            &mut conn,
+            "emp-1".to_string(),
+            vec![
+                CommissionRateInput { service_id: None, rate_type: "percentage".to_string(), rate_value: 10.0 },
+                CommissionRateInput { service_id: Some("svc-1".to_string()), rate_type: "fixed".to_string(), rate_value: 15.0 },
+            ],
+        )
+        .unwrap();
+
+        let report = employee_commissions(&mut conn, "month".to_string(), "2026-01-01T00:00:00Z".to_string()).unwrap();
+
+        let row = report.rows.iter().find(|r| r.employee_id == "emp-1").unwrap();
+        assert_eq!(row.commission_amount, 15.0, "la excepción por servicio debe ganarle a la tasa general");
+    }
+
+    #[test]
+    fn employee_commissions_excludes_voided_sale() {
+        let mut conn = open_test_db();
+        seed_employee(&conn, "emp-1", "Ana");
+        seed_customer(&conn);
+        seed_service(&conn, "svc-1");
+        seed_completed_appointment(&conn, "appt-1", "emp-1", "svc-1", "2026-01-10T10:00:00Z", "2026-01-10T11:00:00Z", 200, true);
+        set_default_rate(&mut conn, "emp-1", "percentage", 10.0);
+
+        let report = employee_commissions(&mut conn, "month".to_string(), "2026-01-01T00:00:00Z".to_string()).unwrap();
+
+        let row = report.rows.iter().find(|r| r.employee_id == "emp-1").unwrap();
+        assert_eq!(row.completed_appointments, 0);
+        assert_eq!(row.revenue, 0);
+        assert_eq!(row.commission_amount, 0.0, "una venta anulada no debe generar comisión");
+    }
+
+    #[test]
+    fn employee_commissions_excludes_appointments_before_from() {
+        let mut conn = open_test_db();
+        seed_employee(&conn, "emp-1", "Ana");
+        seed_customer(&conn);
+        seed_service(&conn, "svc-1");
+        seed_completed_appointment(&conn, "appt-1", "emp-1", "svc-1", "2025-12-01T10:00:00Z", "2025-12-01T11:00:00Z", 200, false);
+        set_default_rate(&mut conn, "emp-1", "percentage", 10.0);
+
+        let report = employee_commissions(&mut conn, "month".to_string(), "2026-01-01T00:00:00Z".to_string()).unwrap();
+
+        let row = report.rows.iter().find(|r| r.employee_id == "emp-1").unwrap();
+        assert_eq!(row.commission_amount, 0.0, "una cita anterior al período no debe contar");
     }
 }

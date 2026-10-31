@@ -5,7 +5,7 @@ pub struct Package {
     pub id: String,
     pub name: String,
     pub description: Option<String>,
-    pub price: f64,
+    pub price: i64,
     pub photo_path: Option<String>,
     pub status: String,
     pub created_at: String,

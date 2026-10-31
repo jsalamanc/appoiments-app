@@ -27,6 +27,7 @@ pub async fn list_services(
     page: Option<i64>,
     page_size: Option<i64>,
 ) -> AppResult<ListServicesResult> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => {
             state
@@ -40,6 +41,7 @@ pub async fn list_services(
 
 #[tauri::command]
 pub async fn get_service(state: State<'_, AppState>, id: String) -> AppResult<Option<Service>> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => state.db.with_sqlite(move |conn| repo::get(conn, id)).await,
         AppDb::Postgres(pool) => repo::postgres::get(pool, id).await,
@@ -51,7 +53,7 @@ pub async fn get_service(state: State<'_, AppState>, id: String) -> AppResult<Op
 pub struct ServiceInput {
     pub name: String,
     pub description: Option<String>,
-    pub price: f64,
+    pub price: i64,
     pub duration_minutes: i64,
     pub photo_path: Option<String>,
     pub status: String,
@@ -62,6 +64,7 @@ pub async fn create_service(
     state: State<'_, AppState>,
     input: ServiceInput,
 ) -> AppResult<Service> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => state.db.with_sqlite(move |conn| repo::create(conn, input)).await,
         AppDb::Postgres(pool) => repo::postgres::create(pool, input).await,
@@ -77,6 +80,7 @@ pub async fn update_service(
     id: String,
     input: ServiceInput,
 ) -> AppResult<Service> {
+    state.require_user()?;
     let old_photo_path = match &state.db {
         AppDb::Sqlite(_) => {
             let id = id.clone();
@@ -112,6 +116,7 @@ pub async fn update_service(
 /// de confirmar el `DELETE` (issue #18).
 #[tauri::command]
 pub async fn delete_service(app: AppHandle, state: State<'_, AppState>, id: String) -> AppResult<()> {
+    state.require_user()?;
     let old_photo_path = match &state.db {
         AppDb::Sqlite(_) => {
             let id = id.clone();
@@ -141,6 +146,7 @@ pub async fn import_service_photo(
     service_id: String,
     source_file_path: String,
 ) -> AppResult<String> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => {
             state

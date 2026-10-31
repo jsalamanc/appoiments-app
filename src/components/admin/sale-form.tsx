@@ -21,7 +21,12 @@ import {
   normalizeEmail,
 } from "@/lib/customers";
 import { formatCurrency, formatSaleItemType } from "@/lib/format";
-import { cartLineTotal, cartTotal, createSale } from "@/lib/sales";
+import {
+  cartLineTotal,
+  cartTotal,
+  createSale,
+  type PaymentLineInput,
+} from "@/lib/sales";
 import type {
   Customer,
   Package,
@@ -30,6 +35,18 @@ import type {
   SaleItemType,
   Service,
 } from "@/types/database";
+
+const PAYMENT_METHOD_OPTIONS: { value: PaymentMethod; label: string }[] = [
+  { value: "cash", label: "Efectivo" },
+  { value: "transfer", label: "Transferencia" },
+  { value: "card", label: "Tarjeta" },
+];
+
+// Issue #2, Fase 6: el backend guarda el dinero como pesos enteros (sin
+// centavos), así que acá se redondea al peso en vez de a 2 decimales.
+function roundMoney(value: number) {
+  return Math.round(value);
+}
 
 type CatalogOption = {
   item_type: SaleItemType;
@@ -84,7 +101,13 @@ export function SaleForm({ prefill }: { prefill?: SaleFormPrefill }) {
   const [catalogPage, setCatalogPage] = useState(1);
   const [addQuantities, setAddQuantities] = useState<Record<string, number>>({});
   const [cart, setCart] = useState<CartLine[]>([]);
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
+  const [discountAmount, setDiscountAmount] = useState(0);
+  const [singleMethod, setSingleMethod] = useState<PaymentMethod>("cash");
+  const [splitPayment, setSplitPayment] = useState(false);
+  const [paymentLines, setPaymentLines] = useState<PaymentLineInput[]>([
+    { method: "cash", amount: 0 },
+    { method: "card", amount: 0 },
+  ]);
   const [submitting, setSubmitting] = useState(false);
   const [appointmentId, setAppointmentId] = useState<string | null>(
     prefill?.appointmentId ?? null
@@ -149,10 +172,10 @@ export function SaleForm({ prefill }: { prefill?: SaleFormPrefill }) {
             setCustomer(found);
             setCustomerExists(true);
             setLookupDone(true);
-            setEmail(found.email);
+            setEmail(found.email ?? "");
             setName(found.name);
             setPhone(found.phone);
-            setCustomerDocument(found.document);
+            setCustomerDocument(found.document ?? "");
           }
         }
 
@@ -261,8 +284,19 @@ export function SaleForm({ prefill }: { prefill?: SaleFormPrefill }) {
     safeCatalogPage * CATALOG_PAGE_SIZE
   );
 
-  const total = cartTotal(cart);
+  const subtotal = cartTotal(cart);
+  const total = roundMoney(Math.max(0, subtotal - discountAmount));
   const canSell = catalogOptions.length > 0;
+
+  const paymentLinesTotal = roundMoney(
+    paymentLines.reduce((sum, line) => sum + (line.amount || 0), 0)
+  );
+  const paymentsToSend: PaymentLineInput[] = splitPayment
+    ? paymentLines.filter((line) => line.amount > 0)
+    : [{ method: singleMethod, amount: total }];
+  const paymentsReady = splitPayment
+    ? paymentLinesTotal === total && paymentsToSend.length > 0
+    : true;
 
   useEffect(() => {
     setCatalogPage(1);
@@ -286,7 +320,7 @@ export function SaleForm({ prefill }: { prefill?: SaleFormPrefill }) {
         setCustomerExists(true);
         setName(found.name);
         setPhone(found.phone);
-        setEmail(found.email);
+        setEmail(found.email ?? "");
         toast.success("Cliente encontrado");
       } else {
         setCustomer(null);
@@ -312,12 +346,14 @@ export function SaleForm({ prefill }: { prefill?: SaleFormPrefill }) {
       throw new Error("Primero busca el documento del cliente");
     }
 
-    if (!name.trim() || !phone.trim() || !email.trim()) {
-      throw new Error("Completa nombre, teléfono y correo del cliente");
+    if (!name.trim() || !phone.trim()) {
+      throw new Error("Completa nombre y teléfono del cliente");
     }
 
-    const normalizedEmail = normalizeEmail(email);
-    if (!normalizedEmail.includes("@")) {
+    // Issue #2, Fase 5: correo/documento son opcionales — una venta rápida
+    // (cliente de paso) no debe obligar a inventarlos.
+    const normalizedEmail = email.trim() ? normalizeEmail(email) : null;
+    if (normalizedEmail && !normalizedEmail.includes("@")) {
       throw new Error("Ingresa un correo válido");
     }
 
@@ -382,13 +418,18 @@ export function SaleForm({ prefill }: { prefill?: SaleFormPrefill }) {
       toast.error("Agrega al menos un ítem");
       return;
     }
+    if (splitPayment && !paymentsReady) {
+      toast.error(
+        `La suma de los medios de pago (${formatCurrency(paymentLinesTotal)}) debe ser igual al total (${formatCurrency(total)})`
+      );
+      return;
+    }
 
     setSubmitting(true);
     try {
       const readyCustomer = await ensureCustomerReady();
       const saleId = await createSale({
         customerId: readyCustomer.id,
-        paymentMethod,
         items: cart.map((line) => ({
           item_type: line.item_type,
           item_id: line.item_id,
@@ -396,6 +437,8 @@ export function SaleForm({ prefill }: { prefill?: SaleFormPrefill }) {
           unit_price: line.unit_price,
           quantity: line.quantity,
         })),
+        payments: paymentsToSend,
+        discountAmount: discountAmount > 0 ? discountAmount : undefined,
       });
 
       if (appointmentId) {
@@ -792,11 +835,38 @@ export function SaleForm({ prefill }: { prefill?: SaleFormPrefill }) {
           </div>
         )}
 
-        <div className="flex items-center justify-between rounded-2xl bg-lavender/40 px-4 py-3">
-          <span className="text-sm text-muted-foreground">Total</span>
-          <span className="font-heading text-3xl font-semibold">
-            {formatCurrency(total)}
-          </span>
+        <div className="space-y-2 rounded-2xl bg-lavender/40 px-4 py-3">
+          <div className="flex items-center justify-between gap-3">
+            <Label htmlFor="sale-discount" className="text-sm text-muted-foreground">
+              Descuento
+            </Label>
+            <Input
+              id="sale-discount"
+              type="number"
+              min={0}
+              max={subtotal}
+              step="1"
+              className="w-32 text-right"
+              value={discountAmount || ""}
+              onChange={(e) => {
+                const next = Math.round(Number(e.target.value));
+                const safe = Number.isFinite(next) && next >= 0 ? next : 0;
+                setDiscountAmount(Math.min(safe, subtotal));
+              }}
+            />
+          </div>
+          {discountAmount > 0 && (
+            <div className="flex items-center justify-between text-sm text-muted-foreground">
+              <span>Subtotal</span>
+              <span>{formatCurrency(subtotal)}</span>
+            </div>
+          )}
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-muted-foreground">Total</span>
+            <span className="font-heading text-3xl font-semibold">
+              {formatCurrency(total)}
+            </span>
+          </div>
         </div>
       </FadeIn>
 
@@ -804,39 +874,122 @@ export function SaleForm({ prefill }: { prefill?: SaleFormPrefill }) {
         delay={0.15}
         className="space-y-4 rounded-3xl border border-border/70 bg-card shadow-sm p-5"
       >
-        <h2 className="font-heading text-2xl font-semibold">3. Pago</h2>
-        <div className="grid gap-3 sm:grid-cols-2">
-          {(
-            [
-              { value: "cash", label: "Efectivo" },
-              { value: "transfer", label: "Transferencia" },
-            ] as const
-          ).map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              onClick={() => setPaymentMethod(option.value)}
-              className={`rounded-2xl border px-4 py-4 text-left transition ${
-                paymentMethod === option.value
-                  ? "border-primary bg-primary/10"
-                  : "border-border bg-background/50 hover:bg-muted/50"
-              }`}
-            >
-              <p className="font-medium">{option.label}</p>
-              <p className="text-sm text-muted-foreground">
-                {option.value === "cash"
-                  ? "Pago recibido en caja"
-                  : "Pago por transferencia bancaria"}
-              </p>
-            </button>
-          ))}
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="font-heading text-2xl font-semibold">3. Pago</h2>
+          <button
+            type="button"
+            onClick={() => setSplitPayment((v) => !v)}
+            className="text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+          >
+            {splitPayment ? "Usar un solo medio de pago" : "Dividir en varios medios de pago"}
+          </button>
         </div>
+
+        {!splitPayment ? (
+          <div className="grid gap-3 sm:grid-cols-3">
+            {PAYMENT_METHOD_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => setSingleMethod(option.value)}
+                className={`rounded-2xl border px-4 py-4 text-left transition ${
+                  singleMethod === option.value
+                    ? "border-primary bg-primary/10"
+                    : "border-border bg-background/50 hover:bg-muted/50"
+                }`}
+              >
+                <p className="font-medium">{option.label}</p>
+                <p className="text-sm text-muted-foreground">
+                  {option.value === "cash"
+                    ? "Pago recibido en caja"
+                    : option.value === "transfer"
+                      ? "Pago por transferencia bancaria"
+                      : "Pago con tarjeta/datáfono"}
+                </p>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {paymentLines.map((line, index) => (
+              <div key={index} className="flex items-center gap-2">
+                <select
+                  value={line.method}
+                  onChange={(e) => {
+                    const method = e.target.value as PaymentMethod;
+                    setPaymentLines((prev) =>
+                      prev.map((l, i) => (i === index ? { ...l, method } : l))
+                    );
+                  }}
+                  className="flex h-9 rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+                >
+                  {PAYMENT_METHOD_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <Input
+                  type="number"
+                  min={0}
+                  step="1"
+                  className="flex-1"
+                  value={line.amount || ""}
+                  onChange={(e) => {
+                    const next = Math.round(Number(e.target.value));
+                    const amount = Number.isFinite(next) && next >= 0 ? next : 0;
+                    setPaymentLines((prev) =>
+                      prev.map((l, i) => (i === index ? { ...l, amount } : l))
+                    );
+                  }}
+                />
+                {paymentLines.length > 1 && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={() =>
+                      setPaymentLines((prev) => prev.filter((_, i) => i !== index))
+                    }
+                  >
+                    <Trash2 />
+                  </Button>
+                )}
+              </div>
+            ))}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                setPaymentLines((prev) => [...prev, { method: "cash", amount: 0 }])
+              }
+            >
+              <Plus data-icon="inline-start" />
+              Agregar medio de pago
+            </Button>
+            <p
+              className={
+                paymentsReady
+                  ? "text-sm text-muted-foreground"
+                  : "text-sm text-destructive"
+              }
+            >
+              {formatCurrency(paymentLinesTotal)} de {formatCurrency(total)}
+              {!paymentsReady && " — la suma debe coincidir con el total"}
+            </p>
+          </div>
+        )}
 
         <Button
           className="w-full sm:w-auto"
           size="lg"
           disabled={
-            submitting || creatingCustomer || !canSell || cart.length === 0
+            submitting ||
+            creatingCustomer ||
+            !canSell ||
+            cart.length === 0 ||
+            (splitPayment && !paymentsReady)
           }
           onClick={() => void registerSale()}
         >

@@ -20,21 +20,22 @@ type TopServicesReport = {
 
 export default function ReportsServicesPage() {
   const searchParams = useSearchParams();
-  const { period } = getReportPeriod(searchParams.get("period") ?? undefined);
+  const { period, range } = getReportPeriod(searchParams.get("period") ?? undefined);
 
   const [data, setData] = useState<TopServicesReport | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    invoke<TopServicesReport>("get_top_services_report", { period }).then(
-      (r) => {
-        if (!cancelled) setData(r);
-      }
-    );
+    invoke<TopServicesReport>("get_top_services_report", {
+      period,
+      from: range.from,
+    }).then((r) => {
+      if (!cancelled) setData(r);
+    });
     return () => {
       cancelled = true;
     };
-  }, [period]);
+  }, [period, range.from]);
 
   if (!data) return null;
 

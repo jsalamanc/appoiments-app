@@ -24,6 +24,7 @@ pub async fn list_customers(
     page_size: Option<i64>,
     q: Option<String>,
 ) -> AppResult<ListCustomersResult> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => {
             state
@@ -35,7 +36,7 @@ pub async fn list_customers(
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct CustomerRef {
     pub id: String,
     pub name: String,
@@ -53,9 +54,9 @@ pub struct SaleItemRow {
     pub service_id: Option<String>,
     pub package_id: Option<String>,
     pub name_snapshot: String,
-    pub unit_price: f64,
+    pub unit_price: i64,
     pub quantity: i64,
-    pub line_total: f64,
+    pub line_total: i64,
     pub created_at: String,
 }
 
@@ -65,7 +66,7 @@ pub struct SaleWithDetails {
     pub customer_id: String,
     pub appointment_id: Option<String>,
     pub payment_method: String,
-    pub total: f64,
+    pub total: i64,
     pub sold_at: String,
     pub created_at: String,
     pub customers: CustomerRef,
@@ -84,7 +85,7 @@ pub struct EmployeeRef {
 pub struct ServiceRef {
     pub id: String,
     pub name: String,
-    pub price: f64,
+    pub price: i64,
     pub duration_minutes: i64,
     pub status: String,
 }
@@ -120,6 +121,7 @@ pub async fn get_customer_detail(
     state: State<'_, AppState>,
     id: String,
 ) -> AppResult<Option<CustomerDetail>> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => state.db.with_sqlite(move |conn| repo::get_detail(conn, id)).await,
         AppDb::Postgres(pool) => repo::postgres::get_detail(pool, id).await,
@@ -130,8 +132,8 @@ pub async fn get_customer_detail(
 pub struct CustomerInput {
     pub name: String,
     pub phone: String,
-    pub email: String,
-    pub document: String,
+    pub email: Option<String>,
+    pub document: Option<String>,
 }
 
 #[tauri::command]
@@ -139,6 +141,7 @@ pub async fn create_customer(
     state: State<'_, AppState>,
     input: CustomerInput,
 ) -> AppResult<Customer> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => state.db.with_sqlite(move |conn| repo::create(conn, input)).await,
         AppDb::Postgres(pool) => repo::postgres::create(pool, input).await,
@@ -151,6 +154,7 @@ pub async fn update_customer(
     id: String,
     input: CustomerInput,
 ) -> AppResult<Customer> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => {
             state
@@ -167,6 +171,7 @@ pub async fn find_customer_by_document(
     state: State<'_, AppState>,
     document: String,
 ) -> AppResult<Option<Customer>> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => {
             state
@@ -183,6 +188,7 @@ pub async fn find_customer_by_email(
     state: State<'_, AppState>,
     email: String,
 ) -> AppResult<Option<Customer>> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => {
             state
@@ -199,6 +205,7 @@ pub async fn find_customer_by_id(
     state: State<'_, AppState>,
     id: String,
 ) -> AppResult<Option<Customer>> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => state.db.with_sqlite(move |conn| repo::find_by_id(conn, id)).await,
         AppDb::Postgres(pool) => repo::postgres::find_by_id(pool, id).await,

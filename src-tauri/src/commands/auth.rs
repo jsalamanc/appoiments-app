@@ -39,20 +39,27 @@ pub async fn auth_login(
     })
 }
 
+/// Issue #2 (auditoría de permisos): `delete_session` ahora exige que el
+/// `session_token` pertenezca al usuario actualmente reconocido por este
+/// proceso (`current_user`) — antes borraba cualquier token que se le
+/// pasara, sin importar de quién fuera, así que un llamado con el token de
+/// otra persona podía cerrarle la sesión sin su consentimiento.
 #[tauri::command]
 pub async fn auth_logout(
     state: State<'_, AppState>,
     session_token: Option<String>,
 ) -> AppResult<()> {
-    if let Some(token) = session_token {
+    let current_user_id = state.current_user.lock().unwrap().as_ref().map(|u| u.id.clone());
+
+    if let (Some(token), Some(user_id)) = (session_token, current_user_id) {
         match &state.db {
             AppDb::Sqlite(_) => {
                 state
                     .db
-                    .with_sqlite(move |conn| repo::delete_session(conn, token))
+                    .with_sqlite(move |conn| repo::delete_session(conn, token, user_id))
                     .await?
             }
-            AppDb::Postgres(pool) => repo::postgres::delete_session(pool, token).await?,
+            AppDb::Postgres(pool) => repo::postgres::delete_session(pool, token, user_id).await?,
         }
     }
     *state.current_user.lock().unwrap() = None;

@@ -1,4 +1,4 @@
-import type { PaymentMethod, SaleItemType } from "@/types/database";
+import type { Sale, SaleItemType } from "@/types/database";
 
 export function formatCurrency(value: number) {
   return new Intl.NumberFormat("es-CO", {
@@ -16,8 +16,17 @@ export function formatDuration(minutes: number) {
   return `${hours} h ${rest} min`;
 }
 
-export function formatPaymentMethod(method: PaymentMethod) {
-  return method === "cash" ? "Efectivo" : "Transferencia";
+export function formatPaymentMethod(method: Sale["payment_method"]) {
+  switch (method) {
+    case "cash":
+      return "Efectivo";
+    case "transfer":
+      return "Transferencia";
+    case "card":
+      return "Tarjeta";
+    case "mixed":
+      return "Mixto";
+  }
 }
 
 export function formatSaleItemType(type: SaleItemType) {

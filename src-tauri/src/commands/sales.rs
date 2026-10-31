@@ -1,11 +1,8 @@
-//! Dominio `sales`.
-//!
-//! NOTA DE COORDINACIÓN: `get_published_catalog` (abajo) pertenece al
-//! dominio catálogo/inventario (otro ingeniero, en paralelo) — se conserva
-//! tal cual aquí porque comparte este mismo archivo. El resto de los
-//! comandos (`create_sale_with_inventory`, `list_sales`,
-//! `get_cash_day_summary`, `get_revenue_metrics`,
-//! `link_sale_to_appointment`) son del dominio `sales` propiamente dicho.
+//! Dominio `sales`. `get_published_catalog` vive aquí porque comparte este
+//! mismo archivo con el resto de los comandos del dominio
+//! (`create_sale_with_inventory`, `list_sales`, `get_cash_day_summary`,
+//! `get_revenue_metrics`, `link_sale_to_appointment`), aunque consulta
+//! catálogo/inventario en vez de ventas propiamente dichas.
 
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -20,7 +17,7 @@ use crate::repositories::sales as repo;
 use crate::state::AppState;
 
 // ---------------------------------------------------------------------------
-// get_published_catalog (dominio catálogo/inventario — no tocar la lógica)
+// get_published_catalog (dominio catálogo/inventario)
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Serialize)]
@@ -32,6 +29,7 @@ pub struct PublishedCatalog {
 
 #[tauri::command]
 pub async fn get_published_catalog(state: State<'_, AppState>) -> AppResult<PublishedCatalog> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => state.db.with_sqlite(repo::published_catalog).await,
         AppDb::Postgres(pool) => repo::postgres::published_catalog(pool).await,
@@ -47,29 +45,80 @@ pub struct SaleItemInput {
     pub item_type: String,
     pub item_id: String,
     pub name: String,
-    pub unit_price: f64,
+    pub unit_price: i64,
     pub quantity: i64,
+}
+
+/// Un medio de pago usado en la venta y el monto cubierto por él — una venta
+/// normal manda un solo elemento; una venta con pago mixto (ej. mitad
+/// efectivo, mitad tarjeta) manda varios, y la suma debe coincidir con el
+/// total a cobrar (issue #2, Fase 2).
+#[derive(Debug, Deserialize)]
+pub struct PaymentInput {
+    pub method: String,
+    pub amount: i64,
 }
 
 #[tauri::command]
 pub async fn create_sale_with_inventory(
     state: State<'_, AppState>,
     customer_id: String,
-    payment_method: String,
     items: Vec<SaleItemInput>,
+    payments: Vec<PaymentInput>,
+    discount_amount: Option<i64>,
 ) -> AppResult<String> {
+    let user_id = state.require_user()?.id;
     match &state.db {
         AppDb::Sqlite(_) => {
             state
                 .db
                 .with_sqlite(move |conn| {
-                    repo::create_with_inventory(conn, customer_id, payment_method, items)
+                    repo::create_with_inventory(
+                        conn,
+                        customer_id,
+                        Some(user_id),
+                        items,
+                        payments,
+                        discount_amount,
+                    )
                 })
                 .await
         }
         AppDb::Postgres(pool) => {
-            repo::postgres::create_with_inventory(pool, customer_id, payment_method, items).await
+            repo::postgres::create_with_inventory(
+                pool,
+                customer_id,
+                Some(user_id),
+                items,
+                payments,
+                discount_amount,
+            )
+            .await
         }
+    }
+}
+
+/// Anula una venta ya registrada: revierte el stock de los productos
+/// vendidos (un movimiento de inventario `'return'` por cada uno) y marca la
+/// venta como anulada — a partir de ahí, `cash_day_summary`/`revenue_metrics`
+/// dejan de contarla. Solo el dueño puede anular ventas (issue #2,
+/// "funcionalidades imprescindibles"): es una reversa de dinero ya cobrado,
+/// no una operación de rutina del día a día.
+#[tauri::command]
+pub async fn void_sale(
+    state: State<'_, AppState>,
+    sale_id: String,
+    reason: Option<String>,
+) -> AppResult<()> {
+    state.require_owner()?;
+    match &state.db {
+        AppDb::Sqlite(_) => {
+            state
+                .db
+                .with_sqlite(move |conn| repo::void_sale(conn, sale_id, reason))
+                .await
+        }
+        AppDb::Postgres(pool) => repo::postgres::void_sale(pool, sale_id, reason).await,
     }
 }
 
@@ -87,6 +136,20 @@ pub struct ListSalesResult {
     pub payment_method: String,
 }
 
+/// Venta individual con todos sus detalles — usado por el recibo imprimible
+/// (issue #2, Fase 5).
+#[tauri::command]
+pub async fn get_sale(
+    state: State<'_, AppState>,
+    id: String,
+) -> AppResult<Option<SaleWithDetails>> {
+    state.require_user()?;
+    match &state.db {
+        AppDb::Sqlite(_) => state.db.with_sqlite(move |conn| repo::get(conn, id)).await,
+        AppDb::Postgres(pool) => repo::postgres::get(pool, id).await,
+    }
+}
+
 #[tauri::command]
 pub async fn list_sales(
     state: State<'_, AppState>,
@@ -94,6 +157,7 @@ pub async fn list_sales(
     page_size: Option<i64>,
     payment_method: Option<String>,
 ) -> AppResult<ListSalesResult> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => {
             state
@@ -113,24 +177,32 @@ pub async fn list_sales(
 pub struct PaymentBreakdown {
     pub cash_count: i64,
     pub transfer_count: i64,
-    pub cash_revenue: f64,
-    pub transfer_revenue: f64,
+    pub card_count: i64,
+    pub cash_revenue: i64,
+    pub transfer_revenue: i64,
+    pub card_revenue: i64,
 }
 
 #[derive(Debug, Serialize)]
 pub struct CashDaySummary {
     pub sales: Vec<SaleWithDetails>,
     pub sales_count: i64,
-    pub total_revenue: f64,
+    pub total_revenue: i64,
     pub payments: PaymentBreakdown,
     pub from: String,
 }
 
+/// `from` es la medianoche local de "hoy" ya calculada por el frontend
+/// (`getPeriodRange("day")` en `src/lib/sales.ts`) — ver el comentario de
+/// `repositories::sales::cash_day_summary` para el porqué (issue #2: antes
+/// se calculaba en el backend como `now - 24h`, una ventana móvil en UTC,
+/// no el día calendario en la hora local del negocio).
 #[tauri::command]
-pub async fn get_cash_day_summary(state: State<'_, AppState>) -> AppResult<CashDaySummary> {
+pub async fn get_cash_day_summary(state: State<'_, AppState>, from: String) -> AppResult<CashDaySummary> {
+    state.require_user()?;
     match &state.db {
-        AppDb::Sqlite(_) => state.db.with_sqlite(repo::cash_day_summary).await,
-        AppDb::Postgres(pool) => repo::postgres::cash_day_summary(pool).await,
+        AppDb::Sqlite(_) => state.db.with_sqlite(move |conn| repo::cash_day_summary(conn, from)).await,
+        AppDb::Postgres(pool) => repo::postgres::cash_day_summary(pool, from).await,
     }
 }
 
@@ -148,19 +220,34 @@ pub struct PaymentPeriods {
 
 #[derive(Debug, Serialize)]
 pub struct RevenueMetrics {
-    pub total_revenue: f64,
-    pub day_revenue: f64,
-    pub week_revenue: f64,
-    pub month_revenue: f64,
+    pub total_revenue: i64,
+    pub day_revenue: i64,
+    pub week_revenue: i64,
+    pub month_revenue: i64,
     pub sales_count: i64,
     pub payments: PaymentPeriods,
 }
 
+/// Muestra ingresos totales del negocio — a diferencia de `get_cash_day_summary`
+/// (operativo, lo necesita quien cierra caja), esto es información financiera
+/// agregada y queda solo para el dueño (issue #2: antes cualquiera podía
+/// llamarlo sin sesión).
 #[tauri::command]
-pub async fn get_revenue_metrics(state: State<'_, AppState>) -> AppResult<RevenueMetrics> {
+pub async fn get_revenue_metrics(
+    state: State<'_, AppState>,
+    day_from: String,
+    week_from: String,
+    month_from: String,
+) -> AppResult<RevenueMetrics> {
+    state.require_owner()?;
     match &state.db {
-        AppDb::Sqlite(_) => state.db.with_sqlite(repo::revenue_metrics).await,
-        AppDb::Postgres(pool) => repo::postgres::revenue_metrics(pool).await,
+        AppDb::Sqlite(_) => {
+            state
+                .db
+                .with_sqlite(move |conn| repo::revenue_metrics(conn, day_from, week_from, month_from))
+                .await
+        }
+        AppDb::Postgres(pool) => repo::postgres::revenue_metrics(pool, day_from, week_from, month_from).await,
     }
 }
 
@@ -174,6 +261,7 @@ pub async fn link_sale_to_appointment(
     sale_id: String,
     appointment_id: String,
 ) -> AppResult<()> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => {
             state

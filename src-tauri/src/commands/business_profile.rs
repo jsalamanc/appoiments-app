@@ -54,6 +54,7 @@ pub async fn onboarding_complete_setup(
 
 #[tauri::command]
 pub async fn get_business_profile(state: State<'_, AppState>) -> AppResult<BusinessProfile> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => state.db.with_sqlite(repo::get_profile).await,
         AppDb::Postgres(pool) => repo::postgres::get_profile(pool).await,
@@ -79,6 +80,7 @@ pub async fn update_business_profile(
 
 #[tauri::command]
 pub async fn get_enabled_modules(state: State<'_, AppState>) -> AppResult<ModulesFlags> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => state.db.with_sqlite(repo::get_modules).await,
         AppDb::Postgres(pool) => repo::postgres::get_modules(pool).await,

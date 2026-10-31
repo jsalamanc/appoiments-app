@@ -21,7 +21,7 @@ pub struct EmployeePerformanceRow {
     pub cancelled: i64,
     pub no_show: i64,
     pub total_appointments: i64,
-    pub revenue: f64,
+    pub revenue: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -43,16 +43,67 @@ pub struct EmployeePerformanceReport {
 pub async fn get_employee_performance_report(
     state: State<'_, AppState>,
     period: String,
+    from: String,
 ) -> AppResult<EmployeePerformanceReport> {
     state.require_owner()?;
     match &state.db {
         AppDb::Sqlite(_) => {
             state
                 .db
-                .with_sqlite(move |conn| repo::employee_performance(conn, period))
+                .with_sqlite(move |conn| repo::employee_performance(conn, period, from))
                 .await
         }
-        AppDb::Postgres(pool) => repo::postgres::employee_performance(pool, period).await,
+        AppDb::Postgres(pool) => repo::postgres::employee_performance(pool, period, from).await,
+    }
+}
+
+// ---------------------------------------------------------------------
+// get_employee_commissions_report
+// ---------------------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmployeeCommissionRow {
+    pub employee_id: String,
+    pub name: String,
+    pub color: String,
+    pub completed_appointments: i64,
+    pub revenue: i64,
+    /// A diferencia de `revenue`, queda como `f64`: una comisión por
+    /// porcentaje (`rate_type = "percentage"`) puede dar un resultado
+    /// fraccionario (ej. 12.5% de $1.001.000) — no es un monto guardado en
+    /// la base de datos, solo un cálculo de reporte.
+    pub commission_amount: f64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmployeeCommissionsReport {
+    pub period: String,
+    pub from: String,
+    pub total_commission: f64,
+    pub rows: Vec<EmployeeCommissionRow>,
+}
+
+/// Issue #22 / #2 Fase 4. Reusa el mismo universo de citas que
+/// `get_employee_performance_report` (citas completadas con venta vinculada
+/// no anulada) para calcular cuánto se le debe a cada empleado según las
+/// tasas configuradas en `commands::commissions`.
+#[tauri::command]
+pub async fn get_employee_commissions_report(
+    state: State<'_, AppState>,
+    period: String,
+    from: String,
+) -> AppResult<EmployeeCommissionsReport> {
+    state.require_owner()?;
+    match &state.db {
+        AppDb::Sqlite(_) => {
+            state
+                .db
+                .with_sqlite(move |conn| repo::employee_commissions(conn, period, from))
+                .await
+        }
+        AppDb::Postgres(pool) => repo::postgres::employee_commissions(pool, period, from).await,
     }
 }
 
@@ -66,7 +117,7 @@ pub struct TopServiceRow {
     pub service_id: Option<String>,
     pub name: String,
     pub quantity: i64,
-    pub revenue: f64,
+    pub revenue: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -75,7 +126,9 @@ pub struct TopServicesReport {
     pub period: String,
     pub from: String,
     pub sales_count: i64,
-    pub total_revenue: f64,
+    pub total_revenue: i64,
+    /// `f64`: el ticket promedio es una división (`total_revenue /
+    /// sales_count`) que casi siempre da un resultado fraccionario.
     pub average_ticket: f64,
     pub rows: Vec<TopServiceRow>,
 }
@@ -98,16 +151,17 @@ pub struct TopServicesReport {
 pub async fn get_top_services_report(
     state: State<'_, AppState>,
     period: String,
+    from: String,
 ) -> AppResult<TopServicesReport> {
     state.require_owner()?;
     match &state.db {
         AppDb::Sqlite(_) => {
             state
                 .db
-                .with_sqlite(move |conn| repo::top_services(conn, period))
+                .with_sqlite(move |conn| repo::top_services(conn, period, from))
                 .await
         }
-        AppDb::Postgres(pool) => repo::postgres::top_services(pool, period).await,
+        AppDb::Postgres(pool) => repo::postgres::top_services(pool, period, from).await,
     }
 }
 
@@ -173,15 +227,16 @@ pub struct NoShowsReport {
 pub async fn get_no_shows_report(
     state: State<'_, AppState>,
     period: String,
+    from: String,
 ) -> AppResult<NoShowsReport> {
     state.require_owner()?;
     match &state.db {
         AppDb::Sqlite(_) => {
             state
                 .db
-                .with_sqlite(move |conn| repo::no_shows(conn, period))
+                .with_sqlite(move |conn| repo::no_shows(conn, period, from))
                 .await
         }
-        AppDb::Postgres(pool) => repo::postgres::no_shows(pool, period).await,
+        AppDb::Postgres(pool) => repo::postgres::no_shows(pool, period, from).await,
     }
 }

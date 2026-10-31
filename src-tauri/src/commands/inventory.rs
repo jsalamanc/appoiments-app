@@ -25,6 +25,7 @@ pub async fn list_low_stock_products(
     state: State<'_, AppState>,
     threshold: Option<i64>,
 ) -> AppResult<LowStockResult> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => {
             state
@@ -52,6 +53,7 @@ pub async fn list_inventory_movements(
     page: Option<i64>,
     page_size: Option<i64>,
 ) -> AppResult<ListInventoryMovementsResult> {
+    state.require_user()?;
     match &state.db {
         AppDb::Sqlite(_) => {
             state

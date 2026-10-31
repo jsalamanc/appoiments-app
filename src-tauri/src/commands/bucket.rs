@@ -47,7 +47,12 @@ pub async fn bucket_test_connection(
 /// una segunda instalación apuntando al mismo Postgres/bucket compartido), se
 /// descarga del bucket a esa misma ruta relativa antes de devolverla.
 #[tauri::command]
-pub async fn resolve_photo_cache(app: AppHandle, photo_path: String) -> AppResult<String> {
+pub async fn resolve_photo_cache(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    photo_path: String,
+) -> AppResult<String> {
+    state.require_user()?;
     let data_dir = data_dir(&app)?;
     let local_path = data_dir.join(&photo_path);
     if local_path.exists() {
@@ -82,6 +87,7 @@ pub async fn resolve_photo_cache(app: AppHandle, photo_path: String) -> AppResul
 /// (reemplazo y borrado de un registro ya guardado).
 #[tauri::command]
 pub async fn discard_photo(app: AppHandle, state: State<'_, AppState>, photo_path: String) -> AppResult<()> {
+    state.require_user()?;
     cleanup_old_photo(&data_dir(&app)?, &config_dir(&app)?, &state.db, Some(&photo_path)).await;
     Ok(())
 }
