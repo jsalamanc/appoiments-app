@@ -1,20 +1,21 @@
 # 12 — Portal público de reserva
 
-**Estado:** MVP hecho  
-**Dependencia:** módulo `public_booking` (+ Agenda y Servicios); migraciones `009` y `010`
+**Estado:** no implementado en la edición actual — este documento describía
+la arquitectura Supabase/multi-tenant vieja (RPCs, `center_id`, página
+pública `/r/[slug]` por centro), que no existe en la edición Tauri/Rust de
+escritorio actual (un solo negocio por instalación, sin servidor público).
 
-## Qué es
+**Seguimiento:** issue [#26](https://github.com/jsalamanc/appoiments-app/issues/26)
+("Agenda pública de autoreserva para clientes") — ahí se replantea qué
+necesitaría esta funcionalidad en la arquitectura actual (un backend propio
+accesible desde afuera, o el modo "base de datos propia"/Postgres ya
+existente como base), no el enfoque original de RPCs de Supabase descrito
+aquí originalmente.
 
-Página pública `/r/[slug]` donde el cliente elige servicio, profesional, horario y deja sus datos para crear una cita.
+## Qué era
 
-## Implementado
-
-1. RPCs `get_public_booking_catalog`, `get_public_busy_ranges`, `create_public_booking`
-2. UI de reserva en pasos
-3. Enlace copiable en Ajustes (dueño)
-
-## Fuera de alcance (futuro)
-
-- Pagos online
-- Recordatorios email/WhatsApp
-- Captcha / rate limit avanzado
+Página pública `/r/[slug]` donde el cliente elegía servicio, profesional,
+horario y dejaba sus datos para crear una cita — dependía de RPCs
+(`get_public_booking_catalog`, `get_public_busy_ranges`,
+`create_public_booking`) y de las migraciones `009`/`010` de la arquitectura
+Supabase, ninguna de las cuales existe hoy.
