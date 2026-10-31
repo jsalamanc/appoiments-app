@@ -123,11 +123,11 @@ pub async fn complete_appointment_with_sale(
 }
 
 /// Lectura mínima y de solo lectura para el selector de servicio del
-/// formulario de citas (dominio `appointments`). El dominio `services`
-/// (propiedad de otro ingeniero, fuera de este alcance) definirá su propio
-/// `list_services` paginado más adelante; este comando es intencionalmente
-/// independiente (nombre distinto, sin paginar) para no bloquear `employees`
-/// + `appointments` en ese trabajo paralelo. Ver reporte final para detalles.
+/// formulario de citas (dominio `appointments`). `commands::services::list_services`
+/// (dominio `services`) ya existe, pero pagina y también devuelve borradores;
+/// este comando se queda separado e intencionalmente simple (sin paginar,
+/// solo publicados) porque es todo lo que necesita el selector del
+/// formulario de citas.
 #[tauri::command]
 pub async fn list_published_services_for_appointments(
     state: State<'_, AppState>,

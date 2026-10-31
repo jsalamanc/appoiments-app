@@ -1,11 +1,8 @@
-//! Dominio `sales`.
-//!
-//! NOTA DE COORDINACIÓN: `get_published_catalog` (abajo) pertenece al
-//! dominio catálogo/inventario (otro ingeniero, en paralelo) — se conserva
-//! tal cual aquí porque comparte este mismo archivo. El resto de los
-//! comandos (`create_sale_with_inventory`, `list_sales`,
-//! `get_cash_day_summary`, `get_revenue_metrics`,
-//! `link_sale_to_appointment`) son del dominio `sales` propiamente dicho.
+//! Dominio `sales`. `get_published_catalog` vive aquí porque comparte este
+//! mismo archivo con el resto de los comandos del dominio
+//! (`create_sale_with_inventory`, `list_sales`, `get_cash_day_summary`,
+//! `get_revenue_metrics`, `link_sale_to_appointment`), aunque consulta
+//! catálogo/inventario en vez de ventas propiamente dichas.
 
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -20,7 +17,7 @@ use crate::repositories::sales as repo;
 use crate::state::AppState;
 
 // ---------------------------------------------------------------------------
-// get_published_catalog (dominio catálogo/inventario — no tocar la lógica)
+// get_published_catalog (dominio catálogo/inventario)
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Serialize)]

@@ -1,10 +1,7 @@
-//! Dominio `sales`.
-//!
-//! NOTA DE COORDINACIÓN: `published_catalog` (abajo) pertenece al dominio
-//! catálogo/inventario (otro ingeniero, en paralelo) — se conserva tal cual
-//! aquí porque comparte este mismo archivo. El resto de las funciones
-//! (`create_with_inventory`, `list`, `cash_day_summary`, `revenue_metrics`,
-//! `link_to_appointment`) son del dominio `sales` propiamente dicho.
+//! Dominio `sales`. `published_catalog` vive aquí porque comparte este mismo
+//! archivo con el resto de las funciones del dominio (`create_with_inventory`,
+//! `list`, `cash_day_summary`, `revenue_metrics`, `link_to_appointment`),
+//! aunque consulta catálogo/inventario en vez de ventas propiamente dichas.
 
 use std::collections::HashMap;
 
@@ -23,7 +20,7 @@ use crate::models::service::Service;
 use crate::util::pagination::{get_range, get_total_pages, CATALOG_PAGE_SIZE};
 
 // ---------------------------------------------------------------------------
-// published_catalog (dominio catálogo/inventario — no tocar la lógica)
+// published_catalog (dominio catálogo/inventario)
 // ---------------------------------------------------------------------------
 
 pub fn published_catalog(conn: &mut Connection) -> AppResult<PublishedCatalog> {

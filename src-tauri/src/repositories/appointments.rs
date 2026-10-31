@@ -374,11 +374,11 @@ pub fn complete_with_sale(
 }
 
 /// Lectura mínima y de solo lectura para el selector de servicio del
-/// formulario de citas (dominio `appointments`). El dominio `services`
-/// (propiedad de otro ingeniero, fuera de este alcance) definirá su propio
-/// `list_services` paginado más adelante; este comando es intencionalmente
-/// independiente (nombre distinto, sin paginar) para no bloquear `employees`
-/// + `appointments` en ese trabajo paralelo. Ver reporte final para detalles.
+/// formulario de citas (dominio `appointments`). `repositories::services::list`
+/// (dominio `services`) ya existe, pero pagina y también devuelve borradores;
+/// este comando se queda separado e intencionalmente simple (sin paginar,
+/// solo publicados) porque es todo lo que necesita el selector del
+/// formulario de citas.
 pub fn list_published_services(conn: &mut Connection) -> AppResult<Vec<ServiceRef>> {
     let mut stmt = conn.prepare(
         "SELECT id, name, price, duration_minutes, status FROM services

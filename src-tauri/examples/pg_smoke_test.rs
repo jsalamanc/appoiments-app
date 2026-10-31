@@ -37,7 +37,7 @@ use aura_studio_lib::commands::customers::CustomerInput;
 use aura_studio_lib::commands::employees::EmployeeInput;
 use aura_studio_lib::commands::packages::{PackageInput, PackageItemInput};
 use aura_studio_lib::commands::products::ProductInput;
-use aura_studio_lib::commands::sales::SaleItemInput;
+use aura_studio_lib::commands::sales::{PaymentInput, SaleItemInput};
 use aura_studio_lib::commands::services::ServiceInput;
 use aura_studio_lib::repositories::{
     appointments, auth, business_profile, customers, employees, packages, products, reports,
@@ -143,17 +143,17 @@ async fn run_migration_checks() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     conn.execute(
         "INSERT INTO products (id, name, price, status, stock, created_at, updated_at)
-         VALUES ('prod-1', 'Producto Migrado', 9999.0, 'published', 5, ?1, ?1)",
+         VALUES ('prod-1', 'Producto Migrado', 9999, 'published', 5, ?1, ?1)",
         rusqlite::params![now],
     )?;
     conn.execute(
         "INSERT INTO services (id, name, price, duration_minutes, status, created_at, updated_at)
-         VALUES ('svc-1', 'Servicio Migrado', 5000.0, 45, 'published', ?1, ?1)",
+         VALUES ('svc-1', 'Servicio Migrado', 5000, 45, 'published', ?1, ?1)",
         rusqlite::params![now],
     )?;
     conn.execute(
         "INSERT INTO packages (id, name, price, status, created_at, updated_at)
-         VALUES ('pkg-1', 'Paquete Migrado', 12000.0, 'published', ?1, ?1)",
+         VALUES ('pkg-1', 'Paquete Migrado', 12000, 'published', ?1, ?1)",
         rusqlite::params![now],
     )?;
     conn.execute(
@@ -171,13 +171,13 @@ async fn run_migration_checks() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     conn.execute(
         "INSERT INTO sales (id, customer_id, appointment_id, payment_method, total, sold_at, created_at)
-         VALUES ('sale-1', 'cust-1', 'appt-1', 'cash', 5000.0, ?1, ?1)",
+         VALUES ('sale-1', 'cust-1', 'appt-1', 'cash', 5000, ?1, ?1)",
         rusqlite::params![now],
     )?;
     conn.execute(
         "INSERT INTO sale_items
             (id, sale_id, item_type, service_id, name_snapshot, unit_price, quantity, line_total, created_at)
-         VALUES ('saleitem-1', 'sale-1', 'service', 'svc-1', 'Servicio Migrado', 5000.0, 1, 5000.0, ?1)",
+         VALUES ('saleitem-1', 'sale-1', 'service', 'svc-1', 'Servicio Migrado', 5000, 1, 5000, ?1)",
         rusqlite::params![now],
     )?;
     conn.execute(
@@ -272,8 +272,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         CustomerInput {
             name: "Cliente Test".into(),
             phone: "3000000000".into(),
-            email: "cliente@test.com".into(),
-            document: "123456".into(),
+            email: Some("cliente@test.com".into()),
+            document: Some("123456".into()),
         },
     )
     .await?;
@@ -295,7 +295,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         ServiceInput {
             name: "Corte de prueba".into(),
             description: None,
-            price: 25000.0,
+            price: 25000,
             duration_minutes: 30,
             photo_path: None,
             status: "published".into(),
@@ -311,7 +311,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         &pool,
         ProductInput {
             name: "Shampoo Test".into(),
-            price: 15000.0,
+            price: 15000,
+            cost: 8000,
             photo_path: None,
             status: "published".into(),
         },
@@ -319,7 +320,14 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     .await?;
     println!("✓ product creado: {} ({})", product.name, product.id);
 
-    let stock = products::postgres::set_stock(&pool, product.id.clone(), 10, Some("stock inicial".into())).await?;
+    let stock = products::postgres::set_stock(
+        &pool,
+        product.id.clone(),
+        10,
+        Some("stock inicial".into()),
+        Some(8000),
+    )
+    .await?;
     println!("✓ stock inicial del producto: {stock}");
 
     let package = packages::postgres::create(
@@ -327,7 +335,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         PackageInput {
             name: "Combo Test".into(),
             description: None,
-            price: 35000.0,
+            price: 35000,
             photo_path: None,
             status: "published".into(),
             items: vec![PackageItemInput {
@@ -344,6 +352,9 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         package.package_items.len()
     );
 
+    // 2026-06-01 es lunes (weekday 1, convención `Date.getDay()`); el
+    // horario de negocio sembrado por la migración abre los lunes
+    // 09:00-19:00, así que 15:00 (900 minutos) cae dentro de la ventana.
     let appointment = appointments::postgres::create(
         &pool,
         AppointmentInput {
@@ -352,6 +363,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             service_id: service.id.clone(),
             starts_at: "2026-06-01T15:00:00Z".into(),
             notes: Some("cita de prueba".into()),
+            local_weekday: 1,
+            local_start_minutes: 15 * 60,
         },
     )
     .await?;
@@ -369,6 +382,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             service_id: service.id.clone(),
             starts_at: "2026-06-01T15:00:00Z".into(),
             notes: None,
+            local_weekday: 1,
+            local_start_minutes: 15 * 60,
         },
     )
     .await;
@@ -380,7 +395,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let sale_id = sales::postgres::create_with_inventory(
         &pool,
         customer.id.clone(),
-        "cash".into(),
+        Some(user.id.clone()),
         vec![SaleItemInput {
             item_type: "product".into(),
             item_id: product.id.clone(),
@@ -388,6 +403,11 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             unit_price: product.price,
             quantity: 2,
         }],
+        vec![PaymentInput {
+            method: "cash".into(),
+            amount: product.price * 2,
+        }],
+        None,
     )
     .await?;
     println!("✓ venta creada: {sale_id}");
@@ -408,29 +428,47 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
     println!("✓ cita completada con venta (transacción cruzada appointments+sales)");
 
-    let cash_summary = sales::postgres::cash_day_summary(&pool).await?;
+    // Anterior a cualquier dato que este smoke test pueda crear — el
+    // backend ya no calcula ningún límite de tiempo por su cuenta (issue
+    // #2, Fase 1), así que period/from los manda siempre quien llama.
+    const BEGINNING_OF_TIME: &str = "2000-01-01T00:00:00Z";
+
+    let cash_summary = sales::postgres::cash_day_summary(&pool, BEGINNING_OF_TIME.into()).await?;
     println!(
         "✓ resumen de caja del día: {} ventas, total=${}",
         cash_summary.sales_count, cash_summary.total_revenue
     );
 
-    let metrics = sales::postgres::revenue_metrics(&pool).await?;
+    let metrics = sales::postgres::revenue_metrics(
+        &pool,
+        BEGINNING_OF_TIME.into(),
+        BEGINNING_OF_TIME.into(),
+        BEGINNING_OF_TIME.into(),
+    )
+    .await?;
     println!(
         "✓ métricas de ingresos: total=${} mes=${} (sin bug de comparación de fechas)",
         metrics.total_revenue, metrics.month_revenue
     );
 
-    let perf = reports::postgres::employee_performance(&pool, "month".into()).await?;
+    let perf = reports::postgres::employee_performance(
+        &pool,
+        "month".into(),
+        BEGINNING_OF_TIME.into(),
+    )
+    .await?;
     println!("✓ reporte de desempeño de empleados: {} filas", perf.rows.len());
 
-    let top_services = reports::postgres::top_services(&pool, "month".into()).await?;
+    let top_services =
+        reports::postgres::top_services(&pool, "month".into(), BEGINNING_OF_TIME.into()).await?;
     println!(
         "✓ reporte de top servicios: {} filas, ticket promedio=${}",
         top_services.rows.len(),
         top_services.average_ticket
     );
 
-    let no_shows = reports::postgres::no_shows(&pool, "month".into()).await?;
+    let no_shows =
+        reports::postgres::no_shows(&pool, "month".into(), BEGINNING_OF_TIME.into()).await?;
     println!(
         "✓ reporte de no-shows: {} no-shows, {} cancelados",
         no_shows.no_show_total, no_shows.cancelled_total
@@ -448,8 +486,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         CustomerInput {
             name: "Otro Cliente".into(),
             phone: "3111111111".into(),
-            email: "cliente@test.com".into(), // mismo email que el customer ya creado
-            document: "999999".into(),
+            email: Some("cliente@test.com".into()), // mismo email que el customer ya creado
+            document: Some("999999".into()),
         },
     )
     .await;
