@@ -16,11 +16,12 @@
         "width": 1280,
         "height": 800,
         "minWidth": 1024,
-        "minHeight": 640
+        "minHeight": 640,
+        "zoomHotkeysEnabled": false
       }
     ],
     "security": {
-      "csp": null,
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost data: blob:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
       "assetProtocol": {
         "enable": true,
         "scope": ["$APPDATA/images/**"]

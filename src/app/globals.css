@@ -112,6 +112,21 @@
   h4 {
     font-family: var(--font-display), serif;
   }
+
+  /* Es una app de escritorio, no una página web: el texto de la interfaz no
+     debe poder seleccionarse con el mouse. Los campos editables son la
+     excepción obvia — seguir pudiendo seleccionar/copiar lo que se escribe
+     o pega ahí. */
+  html {
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  input,
+  textarea,
+  [contenteditable="true"] {
+    user-select: text;
+    -webkit-user-select: text;
+  }
 }
 
 @media print {

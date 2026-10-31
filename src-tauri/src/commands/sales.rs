@@ -28,11 +28,19 @@ pub struct PublishedCatalog {
 }
 
 #[tauri::command]
-pub async fn get_published_catalog(state: State<'_, AppState>) -> AppResult<PublishedCatalog> {
+pub async fn get_published_catalog(
+    state: State<'_, AppState>,
+    search: Option<String>,
+) -> AppResult<PublishedCatalog> {
     state.require_user()?;
     match &state.db {
-        AppDb::Sqlite(_) => state.db.with_sqlite(repo::published_catalog).await,
-        AppDb::Postgres(pool) => repo::postgres::published_catalog(pool).await,
+        AppDb::Sqlite(_) => {
+            state
+                .db
+                .with_sqlite(move |conn| repo::published_catalog(conn, search))
+                .await
+        }
+        AppDb::Postgres(pool) => repo::postgres::published_catalog(pool, search).await,
     }
 }
 

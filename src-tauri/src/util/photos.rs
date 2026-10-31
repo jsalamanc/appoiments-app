@@ -6,6 +6,34 @@ use crate::db::new_id;
 use crate::error::{AppError, AppResult};
 use crate::util::bucket::BucketClient;
 
+const ALLOWED_PHOTO_FOLDERS: [&str; 3] = ["products", "services", "packages"];
+
+/// Valida que `photo_path` tenga la forma exacta `images/<folder>/<nombre>.<ext>`
+/// generada por [`import_photo`], antes de usarlo para leer/escribir/borrar en
+/// disco o en el bucket (`resolve_photo_cache`, `discard_photo`). Sin esto, un
+/// `photo_path` recibido por IPC con `..` o una ruta absoluta podría escapar
+/// de `<data_dir>/images/`.
+pub fn validate_photo_path(photo_path: &str) -> AppResult<()> {
+    let invalid = || AppError::validation("Ruta de imagen inválida");
+
+    let parts: Vec<&str> = photo_path.split('/').collect();
+    let [prefix, folder, file_name] = parts[..] else {
+        return Err(invalid());
+    };
+    if prefix != "images" || !ALLOWED_PHOTO_FOLDERS.contains(&folder) {
+        return Err(invalid());
+    }
+
+    let (stem, ext) = file_name.rsplit_once('.').ok_or_else(invalid)?;
+    let stem_ok = !stem.is_empty() && stem.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+    let ext_ok = !ext.is_empty() && ext.chars().all(|c| c.is_ascii_alphanumeric());
+    if !stem_ok || !ext_ok {
+        return Err(invalid());
+    }
+
+    Ok(())
+}
+
 /// Copia `source_file_path` (ruta absoluta elegida por el usuario en un file
 /// picker, ver `@tauri-apps/plugin-dialog`) dentro de
 /// `<data_dir>/images/<folder>/<uuid>.<ext>` y devuelve la ruta relativa (a
