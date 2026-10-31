@@ -19,15 +19,20 @@ pub fn list(
     let page_size = page_size.unwrap_or(CATALOG_PAGE_SIZE);
     let q = q.unwrap_or_default().trim().to_string();
 
+    // La búsqueda se apoya en la tabla FTS5 `customers_search` (migración
+    // 0008), sincronizada por triggers con `customers` — un `LIKE '%texto%'`
+    // directo sobre `customers` no puede usar ningún índice por el comodín
+    // inicial, pero sobre una columna `tokenize = 'trigram'` sí.
     let (total, items_unfiltered_sql_filter) = if q.is_empty() {
         let total: i64 = conn.query_row("SELECT COUNT(*) FROM customers", [], |r| r.get(0))?;
         (total, false)
     } else {
         let pattern = format!("%{}%", q.to_lowercase());
         let total: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM customers WHERE
-                lower(name) LIKE ?1 OR lower(email) LIKE ?1 OR
-                lower(document) LIKE ?1 OR lower(phone) LIKE ?1",
+            "SELECT COUNT(*) FROM customers c
+             JOIN customers_search s ON s.rowid = c.rowid
+             WHERE s.name LIKE ?1 OR s.email LIKE ?1 OR
+                   s.document LIKE ?1 OR s.phone LIKE ?1",
             params![pattern],
             |r| r.get(0),
         )?;
@@ -41,10 +46,11 @@ pub fn list(
     let items = if items_unfiltered_sql_filter {
         let pattern = format!("%{}%", q.to_lowercase());
         let mut stmt = conn.prepare(
-            "SELECT * FROM customers WHERE
-                lower(name) LIKE ?1 OR lower(email) LIKE ?1 OR
-                lower(document) LIKE ?1 OR lower(phone) LIKE ?1
-             ORDER BY name ASC LIMIT ?2 OFFSET ?3",
+            "SELECT c.* FROM customers c
+             JOIN customers_search s ON s.rowid = c.rowid
+             WHERE s.name LIKE ?1 OR s.email LIKE ?1 OR
+                   s.document LIKE ?1 OR s.phone LIKE ?1
+             ORDER BY c.name ASC LIMIT ?2 OFFSET ?3",
         )?;
         let rows = stmt.query_map(params![pattern, limit, offset], Customer::from_row)?;
         rows.collect::<Result<Vec<_>, _>>()?
@@ -710,5 +716,41 @@ mod tests {
         let result = create(&mut conn, input("Cliente", Some("no-es-un-email"), None));
 
         assert!(result.is_err(), "un email presente sigue debiendo tener formato válido");
+    }
+
+    #[test]
+    fn list_search_matches_substring_anywhere_via_fts_trigram() {
+        let mut conn = open_test_db();
+        create(&mut conn, input("Juliana Restrepo", Some("juli@test.com"), Some("CC-1"))).unwrap();
+        create(&mut conn, input("Mario Gómez", Some("mario@test.com"), Some("CC-2"))).unwrap();
+
+        // "lian" está en medio de "Juliana", no al inicio de ninguna palabra:
+        // una tabla FTS5 normal (match por token) no lo encontraría, pero el
+        // tokenizador trigram sí porque replica el comportamiento de LIKE.
+        let result = list(&mut conn, None, None, Some("lian".to_string())).unwrap();
+        assert_eq!(result.items.len(), 1);
+        assert_eq!(result.items[0].name, "Juliana Restrepo");
+    }
+
+    #[test]
+    fn list_search_matches_by_email_and_document_substring() {
+        let mut conn = open_test_db();
+        create(&mut conn, input("Ana López", Some("ana.lopez@test.com"), Some("CC-999"))).unwrap();
+
+        assert_eq!(list(&mut conn, None, None, Some("lopez@test".to_string())).unwrap().items.len(), 1);
+        assert_eq!(list(&mut conn, None, None, Some("999".to_string())).unwrap().items.len(), 1);
+    }
+
+    #[test]
+    fn list_search_keeps_working_after_update_and_delete() {
+        let mut conn = open_test_db();
+        let customer = create(&mut conn, input("Carlos Pérez", None, None)).unwrap();
+
+        update(&mut conn, customer.id.clone(), input("Carlos Actualizado", None, None)).unwrap();
+        assert_eq!(list(&mut conn, None, None, Some("perez".to_string())).unwrap().items.len(), 0);
+        assert_eq!(list(&mut conn, None, None, Some("actualizado".to_string())).unwrap().items.len(), 1);
+
+        conn.execute("DELETE FROM customers WHERE id = ?1", params![customer.id]).unwrap();
+        assert_eq!(list(&mut conn, None, None, Some("actualizado".to_string())).unwrap().items.len(), 0);
     }
 }

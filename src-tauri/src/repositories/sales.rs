@@ -23,23 +23,39 @@ use crate::util::pagination::{get_range, get_total_pages, CATALOG_PAGE_SIZE};
 // published_catalog (dominio catálogo/inventario)
 // ---------------------------------------------------------------------------
 
-pub fn published_catalog(conn: &mut Connection) -> AppResult<PublishedCatalog> {
-    let mut products_stmt =
-        conn.prepare("SELECT * FROM products WHERE status = 'published' ORDER BY name ASC")?;
+/// Tope defensivo para cuando no hay término de búsqueda: el picker del POS
+/// (`src/components/admin/sale-form.tsx`) siempre pagina 3 a la vez en
+/// pantalla, así que nunca necesita más de esto de una sola vez — sin este
+/// límite, un catálogo publicado grande se trae completo por IPC cada vez que
+/// se abre la pantalla de venta (issue #31).
+const CATALOG_PICKER_CAP: i64 = 300;
+
+pub fn published_catalog(conn: &mut Connection, search: Option<String>) -> AppResult<PublishedCatalog> {
+    let search = search.unwrap_or_default().trim().to_lowercase();
+    let pattern = format!("%{search}%");
+
+    let mut products_stmt = conn.prepare(
+        "SELECT * FROM products WHERE status = 'published' AND (?1 = '' OR lower(name) LIKE ?2)
+         ORDER BY name ASC LIMIT ?3",
+    )?;
     let products = products_stmt
-        .query_map([], Product::from_row)?
+        .query_map(params![search, pattern, CATALOG_PICKER_CAP], Product::from_row)?
         .collect::<Result<Vec<_>, _>>()?;
 
-    let mut services_stmt =
-        conn.prepare("SELECT * FROM services WHERE status = 'published' ORDER BY name ASC")?;
+    let mut services_stmt = conn.prepare(
+        "SELECT * FROM services WHERE status = 'published' AND (?1 = '' OR lower(name) LIKE ?2)
+         ORDER BY name ASC LIMIT ?3",
+    )?;
     let services = services_stmt
-        .query_map([], Service::from_row)?
+        .query_map(params![search, pattern, CATALOG_PICKER_CAP], Service::from_row)?
         .collect::<Result<Vec<_>, _>>()?;
 
-    let mut packages_stmt =
-        conn.prepare("SELECT * FROM packages WHERE status = 'published' ORDER BY name ASC")?;
+    let mut packages_stmt = conn.prepare(
+        "SELECT * FROM packages WHERE status = 'published' AND (?1 = '' OR lower(name) LIKE ?2)
+         ORDER BY name ASC LIMIT ?3",
+    )?;
     let packages = packages_stmt
-        .query_map([], Package::from_row)?
+        .query_map(params![search, pattern, CATALOG_PICKER_CAP], Package::from_row)?
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(PublishedCatalog {
@@ -196,6 +212,114 @@ fn sale_to_details(conn: &rusqlite::Connection, sale: Sale) -> AppResult<SaleWit
         sale_items,
         payments,
     })
+}
+
+/// Placeholders `?1, ?2, ...` para un `IN (...)` con `n` valores — rusqlite no
+/// tiene un operador nativo para bindear un `Vec` como lista.
+fn in_placeholders(n: usize) -> String {
+    (1..=n).map(|i| format!("?{i}")).collect::<Vec<_>>().join(", ")
+}
+
+/// Versión en lote de [`sale_to_details`]: en vez de 3 queries (cliente,
+/// ítems, pagos) *por cada venta*, hace 3 queries en total con `IN (...)`
+/// sobre todos los `sale_id`/`customer_id` a la vez. Pensada para
+/// `cash_day_summary` (issue #31), que no tiene un tope de página — con el
+/// volumen de ventas de un día ajetreado, el loop original significaba
+/// cientos de roundtrips secuenciales a SQLite cada vez que se abre caja.
+fn sales_to_details_batch(
+    conn: &rusqlite::Connection,
+    sales: Vec<Sale>,
+) -> AppResult<Vec<SaleWithDetails>> {
+    if sales.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let sale_ids: Vec<&str> = sales.iter().map(|s| s.id.as_str()).collect();
+    let customer_ids: Vec<&str> = sales
+        .iter()
+        .map(|s| s.customer_id.as_str())
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+
+    let mut customers: HashMap<String, CustomerRef> = HashMap::new();
+    {
+        let sql = format!(
+            "SELECT id, name, COALESCE(email, '') AS email, phone, COALESCE(document, '') AS document
+             FROM customers WHERE id IN ({})",
+            in_placeholders(customer_ids.len())
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(customer_ids.iter()), |row| {
+            Ok(CustomerRef {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                email: row.get(2)?,
+                phone: row.get(3)?,
+                document: row.get(4)?,
+            })
+        })?;
+        for customer in rows {
+            let customer = customer?;
+            customers.insert(customer.id.clone(), customer);
+        }
+    }
+
+    let mut items_by_sale: HashMap<String, Vec<SaleItem>> = HashMap::new();
+    {
+        let sql = format!(
+            "SELECT * FROM sale_items WHERE sale_id IN ({}) ORDER BY created_at ASC",
+            in_placeholders(sale_ids.len())
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(sale_ids.iter()), SaleItem::from_row)?;
+        for item in rows {
+            let item = item?;
+            items_by_sale.entry(item.sale_id.clone()).or_default().push(item);
+        }
+    }
+
+    let mut payments_by_sale: HashMap<String, Vec<SalePayment>> = HashMap::new();
+    {
+        let sql = format!(
+            "SELECT * FROM sale_payments WHERE sale_id IN ({}) ORDER BY created_at ASC",
+            in_placeholders(sale_ids.len())
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(sale_ids.iter()), SalePayment::from_row)?;
+        for payment in rows {
+            let payment = payment?;
+            payments_by_sale.entry(payment.sale_id.clone()).or_default().push(payment);
+        }
+    }
+
+    sales
+        .into_iter()
+        .map(|sale| {
+            let customers = customers
+                .get(&sale.customer_id)
+                .cloned()
+                .ok_or(AppError::NotFound)?;
+            let sale_items = items_by_sale.remove(&sale.id).unwrap_or_default();
+            let payments = payments_by_sale.remove(&sale.id).unwrap_or_default();
+            Ok(SaleWithDetails {
+                id: sale.id,
+                customer_id: sale.customer_id,
+                appointment_id: sale.appointment_id,
+                user_id: sale.user_id,
+                payment_method: sale.payment_method,
+                total: sale.total,
+                discount_amount: sale.discount_amount,
+                sold_at: sale.sold_at,
+                created_at: sale.created_at,
+                voided_at: sale.voided_at,
+                void_reason: sale.void_reason,
+                customers,
+                sale_items,
+                payments,
+            })
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -618,10 +742,7 @@ pub fn cash_day_summary(conn: &mut Connection, from: String) -> AppResult<CashDa
         .query_map(params![from], Sale::from_row)?
         .collect::<Result<Vec<_>, _>>()?;
 
-    let mut sales = Vec::with_capacity(sale_rows.len());
-    for sale in sale_rows {
-        sales.push(sale_to_details(conn, sale)?);
-    }
+    let sales = sales_to_details_batch(conn, sale_rows)?;
 
     let (sales_count, total_revenue): (i64, i64) = conn.query_row(
         "SELECT COUNT(*), COALESCE(SUM(total), 0) FROM sales WHERE sold_at >= ?1 AND voided_at IS NULL",
@@ -777,26 +898,47 @@ pub mod postgres {
         Ok(())
     }
 
-    pub async fn published_catalog(pool: &PgPool) -> AppResult<PublishedCatalog> {
-        let product_rows = sqlx::query("SELECT * FROM products WHERE status = 'published' ORDER BY name ASC")
-            .fetch_all(pool)
-            .await?;
+    pub async fn published_catalog(pool: &PgPool, search: Option<String>) -> AppResult<PublishedCatalog> {
+        let search = search.unwrap_or_default().trim().to_lowercase();
+        let pattern = format!("%{search}%");
+
+        let product_rows = sqlx::query(
+            "SELECT * FROM products WHERE status = 'published' AND ($1 = '' OR lower(name) LIKE $2)
+             ORDER BY name ASC LIMIT $3",
+        )
+        .bind(&search)
+        .bind(&pattern)
+        .bind(super::CATALOG_PICKER_CAP)
+        .fetch_all(pool)
+        .await?;
         let products = product_rows
             .iter()
             .map(Product::from_pg_row)
             .collect::<AppResult<Vec<_>>>()?;
 
-        let service_rows = sqlx::query("SELECT * FROM services WHERE status = 'published' ORDER BY name ASC")
-            .fetch_all(pool)
-            .await?;
+        let service_rows = sqlx::query(
+            "SELECT * FROM services WHERE status = 'published' AND ($1 = '' OR lower(name) LIKE $2)
+             ORDER BY name ASC LIMIT $3",
+        )
+        .bind(&search)
+        .bind(&pattern)
+        .bind(super::CATALOG_PICKER_CAP)
+        .fetch_all(pool)
+        .await?;
         let services = service_rows
             .iter()
             .map(Service::from_pg_row)
             .collect::<AppResult<Vec<_>>>()?;
 
-        let package_rows = sqlx::query("SELECT * FROM packages WHERE status = 'published' ORDER BY name ASC")
-            .fetch_all(pool)
-            .await?;
+        let package_rows = sqlx::query(
+            "SELECT * FROM packages WHERE status = 'published' AND ($1 = '' OR lower(name) LIKE $2)
+             ORDER BY name ASC LIMIT $3",
+        )
+        .bind(&search)
+        .bind(&pattern)
+        .bind(super::CATALOG_PICKER_CAP)
+        .fetch_all(pool)
+        .await?;
         let packages = package_rows
             .iter()
             .map(Package::from_pg_row)
@@ -883,6 +1025,101 @@ pub mod postgres {
             sale_items,
             payments,
         })
+    }
+
+    /// Espejo Postgres de la versión en lote de SQLite (issue #31): en vez de
+    /// 3 queries por venta, 3 queries en total con `= ANY($1)` sobre todos los
+    /// `sale_id`/`customer_id` a la vez — pensada para `cash_day_summary`, que
+    /// no tiene tope de paginación.
+    async fn sales_to_details_batch(pool: &PgPool, sales: Vec<Sale>) -> AppResult<Vec<SaleWithDetails>> {
+        if sales.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let sale_ids: Vec<String> = sales.iter().map(|s| s.id.clone()).collect();
+        let customer_ids: Vec<String> = sales
+            .iter()
+            .map(|s| s.customer_id.clone())
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+
+        let mut customers: HashMap<String, CustomerRef> = HashMap::new();
+        {
+            let rows = sqlx::query(
+                "SELECT id, name, COALESCE(email, '') AS email, phone, COALESCE(document, '') AS document
+                 FROM customers WHERE id = ANY($1)",
+            )
+            .bind(&customer_ids)
+            .fetch_all(pool)
+            .await?;
+            for row in &rows {
+                let customer = CustomerRef {
+                    id: row.try_get(0)?,
+                    name: row.try_get(1)?,
+                    email: row.try_get(2)?,
+                    phone: row.try_get(3)?,
+                    document: row.try_get(4)?,
+                };
+                customers.insert(customer.id.clone(), customer);
+            }
+        }
+
+        let mut items_by_sale: HashMap<String, Vec<SaleItem>> = HashMap::new();
+        {
+            let rows = sqlx::query(
+                "SELECT * FROM sale_items WHERE sale_id = ANY($1) ORDER BY created_at ASC",
+            )
+            .bind(&sale_ids)
+            .fetch_all(pool)
+            .await?;
+            for row in &rows {
+                let item = SaleItem::from_pg_row(row)?;
+                items_by_sale.entry(item.sale_id.clone()).or_default().push(item);
+            }
+        }
+
+        let mut payments_by_sale: HashMap<String, Vec<SalePayment>> = HashMap::new();
+        {
+            let rows = sqlx::query(
+                "SELECT * FROM sale_payments WHERE sale_id = ANY($1) ORDER BY created_at ASC",
+            )
+            .bind(&sale_ids)
+            .fetch_all(pool)
+            .await?;
+            for row in &rows {
+                let payment = SalePayment::from_pg_row(row)?;
+                payments_by_sale.entry(payment.sale_id.clone()).or_default().push(payment);
+            }
+        }
+
+        sales
+            .into_iter()
+            .map(|sale| {
+                let customers = customers
+                    .get(&sale.customer_id)
+                    .cloned()
+                    .ok_or(AppError::NotFound)?;
+                let sale_items = items_by_sale.remove(&sale.id).unwrap_or_default();
+                let payments = payments_by_sale.remove(&sale.id).unwrap_or_default();
+                Ok(SaleWithDetails {
+                    id: sale.id,
+                    customer_id: sale.customer_id,
+                    appointment_id: sale.appointment_id,
+                    user_id: sale.user_id,
+                    payment_method: sale.payment_method,
+                    total: sale.total,
+                    discount_amount: sale.discount_amount,
+                    sold_at: sale.sold_at,
+                    created_at: sale.created_at,
+                    voided_at: sale.voided_at,
+                    void_reason: sale.void_reason,
+                    customers,
+                    sale_items,
+                    payments,
+                })
+            })
+            .collect()
     }
 
     pub async fn create_with_inventory(
@@ -1287,12 +1524,11 @@ pub mod postgres {
             .bind(from_dt)
             .fetch_all(pool)
             .await?;
-
-        let mut sales = Vec::with_capacity(sale_rows.len());
-        for row in &sale_rows {
-            let sale = Sale::from_pg_row(row)?;
-            sales.push(sale_to_details(pool, sale).await?);
-        }
+        let sale_rows = sale_rows
+            .iter()
+            .map(Sale::from_pg_row)
+            .collect::<AppResult<Vec<_>>>()?;
+        let sales = sales_to_details_batch(pool, sale_rows).await?;
 
         let totals_row = sqlx::query(
             "SELECT COUNT(*) AS cnt, COALESCE(SUM(total), 0)::BIGINT AS revenue
@@ -1431,6 +1667,33 @@ mod tests {
             params![id, name, price, stock],
         )
         .unwrap();
+    }
+
+    fn insert_draft_product(conn: &Connection, id: &str, name: &str) {
+        conn.execute(
+            "INSERT INTO products (id, name, price, status, stock)
+             VALUES (?1, ?2, 10, 'draft', 1)",
+            params![id, name],
+        )
+        .unwrap();
+    }
+
+    /// Issue #31: `get_published_catalog` ya no trae todo el catálogo
+    /// incondicionalmente — con término de búsqueda filtra en SQL, y sin uno
+    /// sigue acotado por `CATALOG_PICKER_CAP`.
+    #[test]
+    fn published_catalog_filters_by_search_and_excludes_drafts() {
+        let mut conn = open_test_db();
+        insert_published_product(&conn, "prod-1", "Shampoo anticaspa", 50, 10);
+        insert_published_product(&conn, "prod-2", "Acondicionador", 40, 5);
+        insert_draft_product(&conn, "prod-3", "Shampoo sin publicar");
+
+        let all = published_catalog(&mut conn, None).unwrap();
+        assert_eq!(all.products.len(), 2, "no debe incluir productos en borrador");
+
+        let filtered = published_catalog(&mut conn, Some("shampoo".to_string())).unwrap();
+        assert_eq!(filtered.products.len(), 1);
+        assert_eq!(filtered.products[0].name, "Shampoo anticaspa");
     }
 
     fn cash_payment(amount: i64) -> Vec<PaymentInput> {
@@ -1685,6 +1948,58 @@ mod tests {
         assert_eq!(summary.total_revenue, 0);
         assert_eq!(summary.payments.cash_count, 0);
         assert_eq!(summary.sales.len(), 1, "la venta anulada se sigue listando, solo no cuenta en los totales");
+    }
+
+    /// Issue #31: `cash_day_summary` resuelve cliente/ítems/pagos de todas las
+    /// ventas del día con 3 consultas en lote (`sales_to_details_batch`) en
+    /// vez de 3 por venta — esta prueba cubre que el lote no mezcle los
+    /// datos de una venta con los de otra al reensamblarlos.
+    #[test]
+    fn cash_day_summary_batches_details_without_mixing_sales() {
+        let mut conn = open_test_db();
+        insert_customer(&conn, "cust-1");
+        conn.execute(
+            "INSERT INTO customers (id, name, phone, email, document)
+             VALUES ('cust-2', 'Otro cliente', '3000000001', 'otro@test.com', 'DOC-2')",
+            [],
+        )
+        .unwrap();
+        insert_published_product(&conn, "prod-1", "Shampoo", 50, 10);
+        insert_published_product(&conn, "prod-2", "Acondicionador", 30, 10);
+
+        let sale_1 = create_with_inventory(
+            &mut conn,
+            "cust-1".to_string(),
+            None,
+            vec![product_item("prod-1", "Shampoo", 50, 1)],
+            cash_payment(50),
+            None,
+        )
+        .unwrap();
+        let sale_2 = create_with_inventory(
+            &mut conn,
+            "cust-2".to_string(),
+            None,
+            vec![product_item("prod-2", "Acondicionador", 30, 2)],
+            cash_payment(60),
+            None,
+        )
+        .unwrap();
+
+        let summary = cash_day_summary(&mut conn, "0001-01-01T00:00:00Z".to_string()).unwrap();
+        assert_eq!(summary.sales.len(), 2);
+
+        let detail_1 = summary.sales.iter().find(|s| s.id == sale_1).unwrap();
+        assert_eq!(detail_1.customers.id, "cust-1");
+        assert_eq!(detail_1.sale_items.len(), 1);
+        assert_eq!(detail_1.sale_items[0].name_snapshot, "Shampoo");
+        assert_eq!(detail_1.total, 50);
+
+        let detail_2 = summary.sales.iter().find(|s| s.id == sale_2).unwrap();
+        assert_eq!(detail_2.customers.id, "cust-2");
+        assert_eq!(detail_2.sale_items.len(), 1);
+        assert_eq!(detail_2.sale_items[0].name_snapshot, "Acondicionador");
+        assert_eq!(detail_2.total, 60);
     }
 
     fn insert_published_package(conn: &Connection, id: &str, name: &str, price: i64) {

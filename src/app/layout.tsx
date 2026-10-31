@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Cormorant_Garamond, Nunito } from "next/font/google";
 import { Toaster } from "@/components/ui/sonner";
+import { WebviewZoomGuard } from "@/components/webview-zoom-guard";
 
 import "./globals.css";
 
@@ -42,6 +43,7 @@ export default function RootLayout({
       className={`${display.variable} ${body.variable} h-full antialiased`}
     >
       <body className="flex min-h-full flex-col font-sans">
+        <WebviewZoomGuard />
         {children}
         <Toaster richColors position="top-center" />
       </body>

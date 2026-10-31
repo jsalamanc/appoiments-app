@@ -3,7 +3,7 @@
 import { ChevronLeft, ChevronRight, Plus, Search, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { FadeIn } from "@/components/motion/fade-in";
@@ -12,7 +12,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { completeAppointmentWithSale } from "@/lib/appointments";
-import { fetchSellableCatalog } from "@/lib/catalog-client";
+import {
+  fetchPublishedCatalogItems,
+  fetchSellableCatalog,
+} from "@/lib/catalog-client";
 import {
   createCustomer,
   findCustomerByDocument,
@@ -144,7 +147,9 @@ export function SaleForm({ prefill }: { prefill?: SaleFormPrefill }) {
           err instanceof Error ? err.message : "No se pudo cargar el catálogo"
         );
       } finally {
-        if (active) setCatalogLoading(false);
+        if (active) {
+          setCatalogLoading(false);
+        }
       }
     }
 
@@ -153,6 +158,39 @@ export function SaleForm({ prefill }: { prefill?: SaleFormPrefill }) {
       active = false;
     };
   }, []);
+
+  // Issue #31: la búsqueda del picker ahora se resuelve en SQL en vez de
+  // filtrar en JS un catálogo ya cargado completo — `searchActiveRef` evita
+  // un refetch redundante justo después de la carga inicial (que ya trajo la
+  // lista sin búsqueda) pero sí refresca cuando el usuario borra el texto
+  // después de haber buscado algo.
+  const searchActiveRef = useRef(false);
+  useEffect(() => {
+    if (catalogLoading) return;
+    const trimmed = catalogSearch.trim();
+    if (!trimmed && !searchActiveRef.current) return;
+    searchActiveRef.current = trimmed.length > 0;
+
+    let active = true;
+    const timeout = setTimeout(() => {
+      void fetchPublishedCatalogItems(trimmed, modulesEnabled).then((result) => {
+        if (!active) return;
+        if (result.error) {
+          setCatalogError(result.error);
+          return;
+        }
+        setCatalogError(null);
+        setProducts(result.products);
+        setServices(result.services);
+        setPackages(result.packages);
+      });
+    }, 250);
+
+    return () => {
+      active = false;
+      clearTimeout(timeout);
+    };
+  }, [catalogSearch, modulesEnabled, catalogLoading]);
 
   useEffect(() => {
     if (catalogLoading || prefillDone) return;
@@ -263,16 +301,14 @@ export function SaleForm({ prefill }: { prefill?: SaleFormPrefill }) {
     return map;
   }, [cart]);
 
+  // El filtro por texto ya se resolvió en SQL (ver el efecto de búsqueda con
+  // debounce arriba): `products`/`services`/`packages` ya vienen acotados a
+  // `catalogSearch`, así que acá solo queda aplicar el filtro por tipo.
   const filteredOptions = useMemo(() => {
-    const query = catalogSearch.trim().toLowerCase();
-    return catalogOptions.filter((option) => {
-      const matchesType =
-        catalogFilter === "all" || option.item_type === catalogFilter;
-      const matchesSearch =
-        !query || option.name.toLowerCase().includes(query);
-      return matchesType && matchesSearch;
-    });
-  }, [catalogOptions, catalogFilter, catalogSearch]);
+    return catalogOptions.filter(
+      (option) => catalogFilter === "all" || option.item_type === catalogFilter
+    );
+  }, [catalogOptions, catalogFilter]);
 
   const catalogTotalPages = Math.max(
     1,
