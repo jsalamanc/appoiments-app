@@ -3,11 +3,12 @@ use std::collections::HashMap;
 use rusqlite::{params, Connection};
 
 use crate::commands::reports::{
-    EmployeeCommissionRow, EmployeeCommissionsReport, EmployeePerformanceReport,
-    EmployeePerformanceRow, NoShowCustomerRow, NoShowsReport, RecentCustomerRef,
-    RecentNoShowRow, TopServiceRow, TopServicesReport,
+    CustomerLtvReport, CustomerLtvRow, EmployeeCommissionRow, EmployeeCommissionsReport,
+    EmployeePerformanceReport, EmployeePerformanceRow, NoShowCustomerRow, NoShowsReport,
+    RecentCustomerRef, RecentNoShowRow, RevenueTrendPoint, RevenueTrendsReport, TopServiceRow,
+    TopServicesReport,
 };
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 
 /// Puerto de `getEmployeePerformance` (src/lib/reports-server.ts).
 ///
@@ -33,7 +34,7 @@ pub fn employee_performance(
             COUNT(CASE WHEN a.status = 'cancelled' THEN 1 END) AS cancelled,
             COUNT(CASE WHEN a.status = 'no_show' THEN 1 END) AS no_show,
             COUNT(a.id) AS total_appointments,
-            COALESCE(SUM(s.total), 0.0) AS revenue
+            COALESCE(SUM(s.total), 0) AS revenue
          FROM employees e
          LEFT JOIN appointments a
             ON a.employee_id = e.id AND a.starts_at >= ?1
@@ -313,6 +314,205 @@ pub fn no_shows(
     })
 }
 
+/// Sub-periodos ("buckets") dentro del periodo actual para la gráfica de
+/// tendencia, con el mismo tamaño de paso según el filtro ya seleccionado
+/// (día -> horas, semana -> días, mes -> semanas) en vez de una ventana fija,
+/// para no introducir un segundo selector además del que ya usan todos los
+/// demás reportes. Ningún bucket que empiece después de `now` se genera — un
+/// negocio nuevo simplemente no tiene buckets futuros vacíos. Compartida
+/// entre la implementación SQLite y Postgres (ver `postgres::revenue_trends`).
+fn trend_buckets(
+    period: &str,
+    from: time::OffsetDateTime,
+    now: time::OffsetDateTime,
+) -> Vec<(String, time::OffsetDateTime, time::OffsetDateTime)> {
+    let (bucket_len, count): (time::Duration, i32) = match period {
+        "day" => (time::Duration::hours(4), 6),
+        "week" => (time::Duration::days(1), 7),
+        _ => (time::Duration::days(7), 5), // "month" y cualquier otro valor
+    };
+
+    let mut out = Vec::new();
+    for i in 0..count {
+        let bucket_start = from + bucket_len * i;
+        if bucket_start > now {
+            break;
+        }
+        let bucket_end = bucket_start + bucket_len;
+        let label = match period {
+            "day" => format!("{:02}:00", bucket_start.hour()),
+            "week" => weekday_label(bucket_start.weekday()).to_string(),
+            _ => format!("Sem {}", i + 1),
+        };
+        out.push((label, bucket_start, bucket_end));
+    }
+    out
+}
+
+fn weekday_label(weekday: time::Weekday) -> &'static str {
+    match weekday {
+        time::Weekday::Monday => "Lun",
+        time::Weekday::Tuesday => "Mar",
+        time::Weekday::Wednesday => "Mié",
+        time::Weekday::Thursday => "Jue",
+        time::Weekday::Friday => "Vie",
+        time::Weekday::Saturday => "Sáb",
+        time::Weekday::Sunday => "Dom",
+    }
+}
+
+/// Formatea un `OffsetDateTime` en el mismo formato ISO8601 con milisegundos
+/// de 3 dígitos que usa SQLite (`strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`) y el
+/// frontend (`Date.toISOString()`), para que la comparación de cadenas contra
+/// `sold_at` siga siendo cronológicamente correcta (un `Rfc3339` formateado
+/// sin fracción cuando es cero rompería esa comparación).
+fn format_sqlite_timestamp(value: time::OffsetDateTime) -> String {
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+        value.year(),
+        u8::from(value.month()),
+        value.day(),
+        value.hour(),
+        value.minute(),
+        value.second(),
+        value.millisecond(),
+    )
+}
+
+fn parse_rfc3339(value: &str) -> AppResult<time::OffsetDateTime> {
+    time::OffsetDateTime::parse(value, &time::format_description::well_known::Rfc3339)
+        .map_err(|e| AppError::Internal(e.to_string()))
+}
+
+/// Issue #23: ingresos del periodo actual vs. el periodo anterior inmediato,
+/// más una serie de sub-periodos para graficar la tendencia dentro del
+/// periodo actual. Mismo filtro `voided_at IS NULL` que el resto de reportes
+/// de ingresos.
+pub fn revenue_trends(
+    conn: &mut Connection,
+    period: String,
+    from: String,
+    previous_from: String,
+) -> AppResult<RevenueTrendsReport> {
+    let (current_sales_count, current_revenue): (i64, i64) = conn.query_row(
+        "SELECT COUNT(*), COALESCE(SUM(total), 0) FROM sales
+         WHERE sold_at >= ?1 AND voided_at IS NULL",
+        params![from],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+
+    let (previous_sales_count, previous_revenue): (i64, i64) = conn.query_row(
+        "SELECT COUNT(*), COALESCE(SUM(total), 0) FROM sales
+         WHERE sold_at >= ?1 AND sold_at < ?2 AND voided_at IS NULL",
+        params![previous_from, from],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+
+    let delta_percent = if previous_revenue == 0 {
+        None
+    } else {
+        Some((current_revenue - previous_revenue) as f64 / previous_revenue as f64 * 100.0)
+    };
+
+    let from_dt = parse_rfc3339(&from)?;
+    let now = time::OffsetDateTime::now_utc();
+    let mut points = Vec::new();
+    for (label, bucket_start, bucket_end) in trend_buckets(&period, from_dt, now) {
+        let start_str = format_sqlite_timestamp(bucket_start);
+        let end_str = format_sqlite_timestamp(bucket_end);
+        let (sales_count, revenue): (i64, i64) = conn.query_row(
+            "SELECT COUNT(*), COALESCE(SUM(total), 0) FROM sales
+             WHERE sold_at >= ?1 AND sold_at < ?2 AND voided_at IS NULL",
+            params![start_str, end_str],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        points.push(RevenueTrendPoint {
+            label,
+            bucket_start: start_str,
+            revenue,
+            sales_count,
+        });
+    }
+
+    Ok(RevenueTrendsReport {
+        period,
+        from,
+        previous_from,
+        current_revenue,
+        previous_revenue,
+        current_sales_count,
+        previous_sales_count,
+        delta_percent,
+        points,
+    })
+}
+
+/// Issue #23: valor histórico total por cliente (LTV) y frecuencia de
+/// visita, usando `sales.sold_at`/`sales.customer_id` (ver nota en el
+/// comando `get_customer_ltv_report`). Los promedios (`average_ltv`/
+/// `average_visit_count`) se calculan sobre el set completo de clientes con
+/// ventas, antes de truncar `rows` a `limit` — mismo criterio que
+/// `employee_commissions`: SQL simple más agregación en Rust.
+pub fn customer_ltv(conn: &mut Connection, limit: i64) -> AppResult<CustomerLtvReport> {
+    let mut stmt = conn.prepare(
+        "SELECT
+            c.id AS customer_id,
+            c.name AS name,
+            c.phone AS phone,
+            COALESCE(c.email, '') AS email,
+            SUM(s.total) AS total_spent,
+            COUNT(s.id) AS visit_count,
+            MIN(s.sold_at) AS first_visit_at,
+            MAX(s.sold_at) AS last_visit_at,
+            CASE WHEN COUNT(s.id) > 1
+                 THEN (julianday(MAX(s.sold_at)) - julianday(MIN(s.sold_at))) / (COUNT(s.id) - 1)
+                 ELSE NULL END AS avg_days_between_visits
+         FROM sales s
+         JOIN customers c ON c.id = s.customer_id
+         WHERE s.voided_at IS NULL
+         GROUP BY c.id, c.name, c.phone, c.email
+         ORDER BY total_spent DESC",
+    )?;
+
+    let mut rows = stmt
+        .query_map([], |row| {
+            Ok(CustomerLtvRow {
+                customer_id: row.get("customer_id")?,
+                name: row.get("name")?,
+                phone: row.get("phone")?,
+                email: row.get("email")?,
+                total_spent: row.get("total_spent")?,
+                visit_count: row.get("visit_count")?,
+                avg_days_between_visits: row.get("avg_days_between_visits")?,
+                first_visit_at: row.get("first_visit_at")?,
+                last_visit_at: row.get("last_visit_at")?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let total_customers_with_sales = rows.len() as i64;
+    let average_ltv = if total_customers_with_sales == 0 {
+        0.0
+    } else {
+        rows.iter().map(|r| r.total_spent).sum::<i64>() as f64 / total_customers_with_sales as f64
+    };
+    let average_visit_count = if total_customers_with_sales == 0 {
+        0.0
+    } else {
+        rows.iter().map(|r| r.visit_count).sum::<i64>() as f64 / total_customers_with_sales as f64
+    };
+
+    rows.truncate(limit.max(0) as usize);
+
+    Ok(CustomerLtvReport {
+        limit,
+        total_customers_with_sales,
+        average_ltv,
+        average_visit_count,
+        rows,
+    })
+}
+
 /// Implementación PostgreSQL (issue #9, Fase 2) — misma lógica de agregación
 /// que arriba, adaptada al driver async `sqlx`.
 ///
@@ -330,9 +530,10 @@ pub mod postgres {
     use sqlx::{PgPool, Row};
 
     use crate::commands::reports::{
-        EmployeeCommissionRow, EmployeeCommissionsReport, EmployeePerformanceReport,
-        EmployeePerformanceRow, NoShowCustomerRow, NoShowsReport, RecentCustomerRef,
-        RecentNoShowRow, TopServiceRow, TopServicesReport,
+        CustomerLtvReport, CustomerLtvRow, EmployeeCommissionRow, EmployeeCommissionsReport,
+        EmployeePerformanceReport, EmployeePerformanceRow, NoShowCustomerRow, NoShowsReport,
+        RecentCustomerRef, RecentNoShowRow, RevenueTrendPoint, RevenueTrendsReport, TopServiceRow,
+        TopServicesReport,
     };
     use crate::db::format_pg_timestamp;
     use crate::error::{AppError, AppResult};
@@ -651,6 +852,147 @@ pub mod postgres {
             recent,
         })
     }
+
+    /// Ver `super::revenue_trends` — misma lógica, dialecto Postgres. Los
+    /// bordes de los buckets (`super::trend_buckets`, dialecto-independiente)
+    /// se bindean como `OffsetDateTime` nativo, nunca como texto.
+    pub async fn revenue_trends(
+        pool: &PgPool,
+        period: String,
+        from: String,
+        previous_from: String,
+    ) -> AppResult<RevenueTrendsReport> {
+        let from_ts = parse_from(&from)?;
+        let previous_from_ts = parse_from(&previous_from)?;
+
+        let current_row = sqlx::query(
+            "SELECT COUNT(*) AS n, COALESCE(SUM(total), 0)::BIGINT AS rev
+             FROM sales WHERE sold_at >= $1 AND voided_at IS NULL",
+        )
+        .bind(from_ts)
+        .fetch_one(pool)
+        .await?;
+        let current_sales_count: i64 = current_row.try_get("n")?;
+        let current_revenue: i64 = current_row.try_get("rev")?;
+
+        let previous_row = sqlx::query(
+            "SELECT COUNT(*) AS n, COALESCE(SUM(total), 0)::BIGINT AS rev
+             FROM sales WHERE sold_at >= $1 AND sold_at < $2 AND voided_at IS NULL",
+        )
+        .bind(previous_from_ts)
+        .bind(from_ts)
+        .fetch_one(pool)
+        .await?;
+        let previous_sales_count: i64 = previous_row.try_get("n")?;
+        let previous_revenue: i64 = previous_row.try_get("rev")?;
+
+        let delta_percent = if previous_revenue == 0 {
+            None
+        } else {
+            Some((current_revenue - previous_revenue) as f64 / previous_revenue as f64 * 100.0)
+        };
+
+        let now = time::OffsetDateTime::now_utc();
+        let mut points = Vec::new();
+        for (label, bucket_start, bucket_end) in super::trend_buckets(&period, from_ts, now) {
+            let row = sqlx::query(
+                "SELECT COUNT(*) AS n, COALESCE(SUM(total), 0)::BIGINT AS rev
+                 FROM sales WHERE sold_at >= $1 AND sold_at < $2 AND voided_at IS NULL",
+            )
+            .bind(bucket_start)
+            .bind(bucket_end)
+            .fetch_one(pool)
+            .await?;
+            let sales_count: i64 = row.try_get("n")?;
+            let revenue: i64 = row.try_get("rev")?;
+            points.push(RevenueTrendPoint {
+                label,
+                bucket_start: format_pg_timestamp(bucket_start),
+                revenue,
+                sales_count,
+            });
+        }
+
+        Ok(RevenueTrendsReport {
+            period,
+            from: format_pg_timestamp(from_ts),
+            previous_from: format_pg_timestamp(previous_from_ts),
+            current_revenue,
+            previous_revenue,
+            current_sales_count,
+            previous_sales_count,
+            delta_percent,
+            points,
+        })
+    }
+
+    /// Ver `super::customer_ltv` — misma lógica, dialecto Postgres.
+    pub async fn customer_ltv(pool: &PgPool, limit: i64) -> AppResult<CustomerLtvReport> {
+        let rows = sqlx::query(
+            "SELECT
+                c.id AS customer_id,
+                c.name AS name,
+                c.phone AS phone,
+                COALESCE(c.email, '') AS email,
+                SUM(s.total)::BIGINT AS total_spent,
+                COUNT(s.id) AS visit_count,
+                MIN(s.sold_at) AS first_visit_at,
+                MAX(s.sold_at) AS last_visit_at,
+                CASE WHEN COUNT(s.id) > 1
+                     THEN EXTRACT(EPOCH FROM (MAX(s.sold_at) - MIN(s.sold_at))) / 86400.0 / (COUNT(s.id) - 1)
+                     ELSE NULL END AS avg_days_between_visits
+             FROM sales s
+             JOIN customers c ON c.id = s.customer_id
+             WHERE s.voided_at IS NULL
+             GROUP BY c.id, c.name, c.phone, c.email
+             ORDER BY total_spent DESC",
+        )
+        .fetch_all(pool)
+        .await?;
+
+        let mut rows = rows
+            .iter()
+            .map(|row| -> AppResult<CustomerLtvRow> {
+                let first_visit_at: time::OffsetDateTime = row.try_get("first_visit_at")?;
+                let last_visit_at: time::OffsetDateTime = row.try_get("last_visit_at")?;
+                Ok(CustomerLtvRow {
+                    customer_id: row.try_get("customer_id")?,
+                    name: row.try_get("name")?,
+                    phone: row.try_get("phone")?,
+                    email: row.try_get("email")?,
+                    total_spent: row.try_get("total_spent")?,
+                    visit_count: row.try_get("visit_count")?,
+                    avg_days_between_visits: row.try_get("avg_days_between_visits")?,
+                    first_visit_at: format_pg_timestamp(first_visit_at),
+                    last_visit_at: format_pg_timestamp(last_visit_at),
+                })
+            })
+            .collect::<AppResult<Vec<_>>>()?;
+
+        let total_customers_with_sales = rows.len() as i64;
+        let average_ltv = if total_customers_with_sales == 0 {
+            0.0
+        } else {
+            rows.iter().map(|r| r.total_spent).sum::<i64>() as f64
+                / total_customers_with_sales as f64
+        };
+        let average_visit_count = if total_customers_with_sales == 0 {
+            0.0
+        } else {
+            rows.iter().map(|r| r.visit_count).sum::<i64>() as f64
+                / total_customers_with_sales as f64
+        };
+
+        rows.truncate(limit.max(0) as usize);
+
+        Ok(CustomerLtvReport {
+            limit,
+            total_customers_with_sales,
+            average_ltv,
+            average_visit_count,
+            rows,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -686,6 +1028,23 @@ mod tests {
             "INSERT INTO services (id, name, price, duration_minutes, status)
              VALUES (?1, 'Corte', 20, 60, 'published')",
             params![id],
+        )
+        .unwrap();
+    }
+
+    fn seed_customer_named(conn: &Connection, id: &str, name: &str) {
+        conn.execute(
+            "INSERT INTO customers (id, name, phone, email, document) VALUES (?1, ?2, '3000000000', NULL, NULL)",
+            params![id, name],
+        )
+        .unwrap();
+    }
+
+    fn seed_sale(conn: &Connection, id: &str, customer_id: &str, total: i64, sold_at: &str, voided: bool) {
+        conn.execute(
+            "INSERT INTO sales (id, customer_id, payment_method, total, sold_at, voided_at)
+             VALUES (?1, ?2, 'cash', ?3, ?4, ?5)",
+            params![id, customer_id, total, sold_at, if voided { Some("2026-01-01T00:00:00.000Z") } else { None }],
         )
         .unwrap();
     }
@@ -819,5 +1178,171 @@ mod tests {
 
         let row = report.rows.iter().find(|r| r.employee_id == "emp-1").unwrap();
         assert_eq!(row.commission_amount, 0.0, "una cita anterior al período no debe contar");
+    }
+
+    /// Regresión: `COALESCE(SUM(s.total), 0.0)` (literal `REAL`) quedó sin
+    /// actualizar en la migración `0007_money_as_integers.sql` que cambió
+    /// `revenue` a `i64` — con un empleado sin ninguna cita en el periodo,
+    /// `SUM` da `NULL` y `COALESCE` caía al literal float, rompiendo el
+    /// mapeo a `i64` con "Invalid column type Real".
+    #[test]
+    fn employee_performance_returns_zero_revenue_for_employee_without_sales() {
+        let mut conn = open_test_db();
+        seed_employee(&conn, "emp-1", "Ana");
+
+        let report =
+            employee_performance(&mut conn, "month".to_string(), "2026-01-01T00:00:00Z".to_string())
+                .unwrap();
+
+        let row = report.rows.iter().find(|r| r.employee_id == "emp-1").unwrap();
+        assert_eq!(row.revenue, 0);
+        assert_eq!(row.total_appointments, 0);
+    }
+
+    #[test]
+    fn revenue_trends_computes_delta_percent_up() {
+        let mut conn = open_test_db();
+        seed_customer(&conn);
+        seed_sale(&conn, "sale-prev", "cust-1", 100, "2026-01-05T00:00:00.000Z", false);
+        seed_sale(&conn, "sale-cur", "cust-1", 300, "2026-02-05T00:00:00.000Z", false);
+
+        let report = revenue_trends(
+            &mut conn,
+            "month".to_string(),
+            "2026-02-01T00:00:00.000Z".to_string(),
+            "2026-01-01T00:00:00.000Z".to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(report.current_revenue, 300);
+        assert_eq!(report.previous_revenue, 100);
+        assert_eq!(report.delta_percent, Some(200.0));
+    }
+
+    #[test]
+    fn revenue_trends_delta_is_none_when_previous_revenue_zero() {
+        let mut conn = open_test_db();
+        seed_customer(&conn);
+        seed_sale(&conn, "sale-cur", "cust-1", 150, "2026-02-05T00:00:00.000Z", false);
+
+        let report = revenue_trends(
+            &mut conn,
+            "month".to_string(),
+            "2026-02-01T00:00:00.000Z".to_string(),
+            "2026-01-01T00:00:00.000Z".to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(report.previous_revenue, 0);
+        assert_eq!(report.delta_percent, None, "sin ventas en el periodo anterior el % no está definido");
+    }
+
+    #[test]
+    fn revenue_trends_excludes_voided_sales() {
+        let mut conn = open_test_db();
+        seed_customer(&conn);
+        seed_sale(&conn, "sale-cur", "cust-1", 500, "2026-02-05T00:00:00.000Z", true);
+
+        let report = revenue_trends(
+            &mut conn,
+            "month".to_string(),
+            "2026-02-01T00:00:00.000Z".to_string(),
+            "2026-01-01T00:00:00.000Z".to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(report.current_revenue, 0);
+        assert_eq!(report.current_sales_count, 0);
+    }
+
+    #[test]
+    fn revenue_trends_points_bucket_sales_by_weekday_in_week_view() {
+        let mut conn = open_test_db();
+        seed_customer(&conn);
+        // 2020-01-06 es lunes — usar una fecha claramente pasada evita que el
+        // tope "no generar buckets futuros a `now`" dependa de la fecha real
+        // del sistema donde corren los tests.
+        seed_sale(&conn, "sale-tue", "cust-1", 50, "2020-01-07T05:00:00.000Z", false);
+
+        let report = revenue_trends(
+            &mut conn,
+            "week".to_string(),
+            "2020-01-06T00:00:00.000Z".to_string(),
+            "2019-12-30T00:00:00.000Z".to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(report.points.len(), 7, "una semana completa de buckets diarios");
+        let tuesday = report
+            .points
+            .iter()
+            .find(|p| p.label == "Mar")
+            .expect("debe existir un bucket para el martes");
+        assert_eq!(tuesday.revenue, 50);
+        assert_eq!(tuesday.sales_count, 1);
+        let other_total: i64 = report
+            .points
+            .iter()
+            .filter(|p| p.label != "Mar")
+            .map(|p| p.revenue)
+            .sum();
+        assert_eq!(other_total, 0, "los demás buckets no deben tener la venta del martes");
+    }
+
+    #[test]
+    fn customer_ltv_excludes_voided_sales() {
+        let mut conn = open_test_db();
+        seed_customer_named(&conn, "cust-1", "Ana");
+        seed_sale(&conn, "sale-1", "cust-1", 200, "2026-01-05T00:00:00.000Z", true);
+
+        let report = customer_ltv(&mut conn, 20).unwrap();
+
+        assert_eq!(report.total_customers_with_sales, 0, "una venta anulada no debe contar para LTV");
+        assert!(report.rows.is_empty());
+    }
+
+    #[test]
+    fn customer_ltv_avg_days_between_visits_is_none_for_single_visit() {
+        let mut conn = open_test_db();
+        seed_customer_named(&conn, "cust-1", "Ana");
+        seed_sale(&conn, "sale-1", "cust-1", 100, "2026-01-05T00:00:00.000Z", false);
+
+        let report = customer_ltv(&mut conn, 20).unwrap();
+
+        let row = report.rows.iter().find(|r| r.customer_id == "cust-1").unwrap();
+        assert_eq!(row.visit_count, 1);
+        assert_eq!(row.avg_days_between_visits, None);
+    }
+
+    #[test]
+    fn customer_ltv_avg_days_between_visits_correct_for_known_interval() {
+        let mut conn = open_test_db();
+        seed_customer_named(&conn, "cust-1", "Ana");
+        seed_sale(&conn, "sale-1", "cust-1", 100, "2026-01-01T00:00:00.000Z", false);
+        seed_sale(&conn, "sale-2", "cust-1", 100, "2026-01-11T00:00:00.000Z", false);
+
+        let report = customer_ltv(&mut conn, 20).unwrap();
+
+        let row = report.rows.iter().find(|r| r.customer_id == "cust-1").unwrap();
+        assert_eq!(row.visit_count, 2);
+        assert_eq!(row.total_spent, 200);
+        assert_eq!(row.avg_days_between_visits, Some(10.0));
+    }
+
+    #[test]
+    fn customer_ltv_respects_limit_but_aggregates_use_full_set() {
+        let mut conn = open_test_db();
+        for i in 0..3 {
+            let id = format!("cust-{i}");
+            seed_customer_named(&conn, &id, &format!("Cliente {i}"));
+            seed_sale(&conn, &format!("sale-{i}"), &id, 100, "2026-01-05T00:00:00.000Z", false);
+        }
+
+        let report = customer_ltv(&mut conn, 2).unwrap();
+
+        assert_eq!(report.rows.len(), 2, "rows se trunca al límite");
+        assert_eq!(report.total_customers_with_sales, 3, "los agregados usan el set completo");
+        assert_eq!(report.average_ltv, 100.0);
+        assert_eq!(report.average_visit_count, 1.0);
     }
 }

@@ -3,6 +3,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { motion } from "framer-motion";
 import {
+  Award,
   Banknote,
   BarChart3,
   CalendarClock,
@@ -20,6 +21,7 @@ import {
   Settings,
   ShoppingBag,
   Sparkles,
+  TrendingUp,
   UserRound,
   UserX,
   Users,
@@ -179,6 +181,22 @@ const navGroups: NavGroup[] = [
         href: "/admin/reports/commissions",
         label: "Comisiones",
         icon: DollarSign,
+        exact: true,
+        module: "reports",
+        ownerOnly: true,
+      },
+      {
+        href: "/admin/reports/trends",
+        label: "Tendencias",
+        icon: TrendingUp,
+        exact: true,
+        module: "reports",
+        ownerOnly: true,
+      },
+      {
+        href: "/admin/reports/customers-ltv",
+        label: "Clientes (LTV)",
+        icon: Award,
         exact: true,
         module: "reports",
         ownerOnly: true,

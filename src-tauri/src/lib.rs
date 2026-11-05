@@ -99,6 +99,8 @@ pub fn run() {
             commands::reports::get_employee_commissions_report,
             commands::reports::get_top_services_report,
             commands::reports::get_no_shows_report,
+            commands::reports::get_revenue_trends_report,
+            commands::reports::get_customer_ltv_report,
             commands::employees::list_employees,
             commands::employees::create_employee,
             commands::employees::update_employee,

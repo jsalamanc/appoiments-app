@@ -240,3 +240,112 @@ pub async fn get_no_shows_report(
         AppDb::Postgres(pool) => repo::postgres::no_shows(pool, period, from).await,
     }
 }
+
+// ---------------------------------------------------------------------
+// get_revenue_trends_report
+// ---------------------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RevenueTrendPoint {
+    pub label: String,
+    pub bucket_start: String,
+    pub revenue: i64,
+    pub sales_count: i64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RevenueTrendsReport {
+    pub period: String,
+    pub from: String,
+    pub previous_from: String,
+    pub current_revenue: i64,
+    pub previous_revenue: i64,
+    pub current_sales_count: i64,
+    pub previous_sales_count: i64,
+    /// `None` cuando `previous_revenue == 0` (el % de crecimiento no está
+    /// definido/es infinito — el frontend muestra "Nuevo" en vez de un %).
+    pub delta_percent: Option<f64>,
+    pub points: Vec<RevenueTrendPoint>,
+}
+
+/// Issue #23: ingresos del periodo actual vs. el periodo anterior inmediato
+/// (`previous_from` lo calcula el frontend, ver `getPreviousPeriodRange` en
+/// `src/lib/sales.ts`), más una serie de sub-periodos ("buckets") dentro del
+/// periodo actual para graficar la tendencia. El periodo anterior es
+/// siempre `[previous_from, from)` — igual que el resto de los reportes, el
+/// periodo actual no tiene límite superior (`sold_at >= from`).
+#[tauri::command]
+pub async fn get_revenue_trends_report(
+    state: State<'_, AppState>,
+    period: String,
+    from: String,
+    previous_from: String,
+) -> AppResult<RevenueTrendsReport> {
+    state.require_owner()?;
+    match &state.db {
+        AppDb::Sqlite(_) => {
+            state
+                .db
+                .with_sqlite(move |conn| repo::revenue_trends(conn, period, from, previous_from))
+                .await
+        }
+        AppDb::Postgres(pool) => {
+            repo::postgres::revenue_trends(pool, period, from, previous_from).await
+        }
+    }
+}
+
+// ---------------------------------------------------------------------
+// get_customer_ltv_report
+// ---------------------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomerLtvRow {
+    pub customer_id: String,
+    pub name: String,
+    pub phone: String,
+    pub email: String,
+    pub total_spent: i64,
+    pub visit_count: i64,
+    /// `None` cuando el cliente solo tiene una visita (no hay intervalo que promediar).
+    pub avg_days_between_visits: Option<f64>,
+    pub first_visit_at: String,
+    pub last_visit_at: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomerLtvReport {
+    pub limit: i64,
+    pub total_customers_with_sales: i64,
+    pub average_ltv: f64,
+    pub average_visit_count: f64,
+    /// Ya ordenados por `total_spent` descendente y truncados a `limit`.
+    pub rows: Vec<CustomerLtvRow>,
+}
+
+/// Issue #23: valor de cliente (LTV) histórico total y frecuencia de visita,
+/// sin filtro de periodo — a diferencia del resto de los reportes, "lifetime
+/// value" es por definición desde siempre. "Visita" = una venta no anulada
+/// (`sales.sold_at`), no una cita: toda venta tiene `customer_id`
+/// obligatorio y es el registro real de una transacción, mientras que una
+/// cita puede terminar en no-show o no tener venta vinculada.
+#[tauri::command]
+pub async fn get_customer_ltv_report(
+    state: State<'_, AppState>,
+    limit: i64,
+) -> AppResult<CustomerLtvReport> {
+    state.require_owner()?;
+    match &state.db {
+        AppDb::Sqlite(_) => {
+            state
+                .db
+                .with_sqlite(move |conn| repo::customer_ltv(conn, limit))
+                .await
+        }
+        AppDb::Postgres(pool) => repo::postgres::customer_ltv(pool, limit).await,
+    }
+}

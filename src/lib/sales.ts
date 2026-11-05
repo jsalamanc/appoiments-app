@@ -44,6 +44,37 @@ export function getPeriodRange(period: RevenuePeriod, now = new Date()) {
   return { from: start.toISOString(), to };
 }
 
+// Ventana inmediatamente anterior a la actual, de la misma duración/tipo de
+// calendario — usada para el delta "+12% vs periodo anterior" del reporte de
+// tendencias (issue #23). El límite superior del periodo anterior es
+// siempre el `from` del periodo actual, así que no hace falta mandar un "to"
+// explícito al backend (ver `get_revenue_trends_report`).
+//
+// Para "mes" se compara contra el mes calendario anterior COMPLETO (ej. todo
+// octubre vs. lo que va de noviembre), no contra los mismos días
+// transcurridos — es lo que la gente espera al leer "vs. mes pasado", aunque
+// a inicio de mes el % pueda verse artificialmente bajo.
+export function getPreviousPeriodRange(period: RevenuePeriod, now = new Date()) {
+  const current = getPeriodRange(period, now);
+
+  if (period === "day") {
+    const start = new Date(current.from);
+    start.setDate(start.getDate() - 1);
+    return { from: start.toISOString() };
+  }
+
+  if (period === "week") {
+    const start = new Date(current.from);
+    start.setDate(start.getDate() - 7);
+    return { from: start.toISOString() };
+  }
+
+  const currentStart = new Date(current.from);
+  const start = new Date(currentStart.getFullYear(), currentStart.getMonth() - 1, 1);
+  start.setHours(0, 0, 0, 0);
+  return { from: start.toISOString() };
+}
+
 export type PaymentLineInput = {
   method: PaymentMethod;
   amount: number;
