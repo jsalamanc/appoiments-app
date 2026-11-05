@@ -3,12 +3,18 @@ use std::sync::{Arc, Mutex};
 use rusqlite::Connection;
 
 use crate::app_db::AppDb;
+use crate::cognito::CognitoSessionInfo;
 use crate::error::{AppError, AppResult};
 use crate::models::user::UserPublic;
 
 pub struct AppState {
     pub db: AppDb,
     pub current_user: Mutex<Option<UserPublic>>,
+    /// Sesión de Cognito (identidad de quien administra la suscripción/
+    /// negocio en la nube) — totalmente independiente de `current_user`
+    /// (quién opera la app ahora mismo, rol `owner`/`staff`). Ver
+    /// `crate::cognito`.
+    pub cognito_session: Mutex<Option<CognitoSessionInfo>>,
 }
 
 impl AppState {
@@ -16,6 +22,7 @@ impl AppState {
         Self {
             db: AppDb::Sqlite(Arc::new(Mutex::new(db))),
             current_user: Mutex::new(None),
+            cognito_session: Mutex::new(None),
         }
     }
 
@@ -23,6 +30,7 @@ impl AppState {
         Self {
             db: AppDb::Postgres(pool),
             current_user: Mutex::new(None),
+            cognito_session: Mutex::new(None),
         }
     }
 

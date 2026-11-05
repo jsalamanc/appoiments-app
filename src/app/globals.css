@@ -129,6 +129,62 @@
   }
 }
 
+/* Vista de login/onboarding — paleta y tipografía de aura-studio-landing (el
+   sitio público), migradas acá primero porque es la puerta de entrada de la
+   app. A propósito, acotado a `.login-view`: las variables de tema del resto
+   de la app (`:root` de arriba, usadas en el panel de administración) no se
+   tocan — es una migración modular, el resto de la app sigue con su paleta
+   actual hasta que se decida extenderla. */
+.login-view {
+  --background: oklch(0.975 0.012 75);
+  --foreground: oklch(0.24 0.025 45);
+  --card: oklch(0.99 0.008 75);
+  --card-foreground: oklch(0.24 0.025 45);
+  --popover: oklch(0.99 0.008 75);
+  --popover-foreground: oklch(0.24 0.025 45);
+  --primary: oklch(0.58 0.145 40);
+  --primary-foreground: oklch(0.99 0.012 80);
+  --secondary: oklch(0.93 0.022 70);
+  --secondary-foreground: oklch(0.26 0.03 45);
+  --muted: oklch(0.935 0.016 70);
+  --muted-foreground: oklch(0.48 0.025 50);
+  --accent: oklch(0.9 0.035 125);
+  --accent-foreground: oklch(0.28 0.045 125);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.88 0.02 60);
+  --input: oklch(0.88 0.02 60);
+  --ring: oklch(0.58 0.145 40 / 45%);
+  --radius: 1.1rem;
+  /* `--font-display`/`--font-body` son los tokens que ya resuelven
+     `font-heading`/`font-sans` en `@theme inline` de arriba — redirigirlos
+     acá alcanza para que los títulos y el texto de esta vista usen Fraunces
+     y Geist sin cambiar nada fuera de `.login-view`. */
+  --font-display: var(--font-login-display);
+  --font-body: var(--font-login-sans);
+  font-family: var(--font-sans);
+  background-image: none;
+}
+
+.dark .login-view {
+  --background: oklch(0.19 0.018 50);
+  --foreground: oklch(0.96 0.012 75);
+  --card: oklch(0.23 0.02 48);
+  --card-foreground: oklch(0.96 0.012 75);
+  --popover: oklch(0.23 0.02 48);
+  --popover-foreground: oklch(0.96 0.012 75);
+  --primary: oklch(0.7 0.15 42);
+  --primary-foreground: oklch(0.18 0.02 45);
+  --secondary: oklch(0.29 0.022 50);
+  --secondary-foreground: oklch(0.96 0.012 75);
+  --muted: oklch(0.27 0.02 50);
+  --muted-foreground: oklch(0.68 0.025 65);
+  --accent: oklch(0.32 0.045 125);
+  --accent-foreground: oklch(0.9 0.04 125);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.7 0.15 42 / 45%);
+}
+
 @media print {
   @page {
     margin: 1.2cm;

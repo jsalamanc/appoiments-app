@@ -20,6 +20,79 @@ export const loginSchema = z.object({
   rememberMe: z.boolean(),
 });
 
+// El User Pool de Cognito está configurado con `username_attributes =
+// ["email"]` (ver infra/modules/cognito/main.tf del backend): el correo ES
+// el usuario, Cognito no tiene un "usuario" separado. Por eso estos schemas
+// piden `email` únicamente — nunca un campo "usuario" aparte.
+//
+// Cognito exige mayúscula, minúscula y número en la contraseña (política del
+// User Pool) — se valida acá también para dar el error antes de llamar a la
+// API en vez de solo después.
+export const cognitoSignupSchema = z
+  .object({
+    email: z.email("Ingresa un correo válido"),
+    password: z
+      .string()
+      .min(8, "Mínimo 8 caracteres")
+      .regex(/[a-z]/, "Debe incluir una minúscula")
+      .regex(/[A-Z]/, "Debe incluir una mayúscula")
+      .regex(/[0-9]/, "Debe incluir un número"),
+    confirmPassword: z.string().min(1, "Confirma tu contraseña"),
+  })
+  .refine((data) => data.password === data.confirmPassword, {
+    message: "Las contraseñas no coinciden",
+    path: ["confirmPassword"],
+  });
+
+export const cognitoConfirmSchema = z.object({
+  code: z.string().min(1, "Ingresa el código que te enviamos por correo"),
+});
+
+export const cognitoLoginSchema = z.object({
+  email: z.email("Ingresa un correo válido"),
+  password: z.string().min(1, "Ingresa tu contraseña"),
+});
+
+export const cognitoForgotPasswordSchema = z.object({
+  email: z.email("Ingresa un correo válido"),
+});
+
+export const cognitoResetPasswordSchema = z
+  .object({
+    code: z.string().min(1, "Ingresa el código que te enviamos por correo"),
+    newPassword: z
+      .string()
+      .min(8, "Mínimo 8 caracteres")
+      .regex(/[a-z]/, "Debe incluir una minúscula")
+      .regex(/[A-Z]/, "Debe incluir una mayúscula")
+      .regex(/[0-9]/, "Debe incluir un número"),
+    confirmPassword: z.string().min(1, "Confirma tu nueva contraseña"),
+  })
+  .refine((data) => data.newPassword === data.confirmPassword, {
+    message: "Las contraseñas no coinciden",
+    path: ["confirmPassword"],
+  });
+
+// Recuperar la contraseña del dueño local reusando la cuenta de Cognito que
+// configuró el negocio como prueba de identidad (ver
+// commands::auth::auth_recover_owner_password) — no hay un "olvidé mi
+// contraseña" propio del login local, a propósito, para no duplicar lo que
+// ya construimos para Cognito.
+export const recoverOwnerPasswordSchema = z
+  .object({
+    cognitoEmail: z.email("Ingresa un correo válido"),
+    cognitoPassword: z.string().min(1, "Ingresa tu contraseña de Cognito"),
+    localUsername: z.string().min(1, "Ingresa el usuario dueño a recuperar"),
+    newPassword: z
+      .string()
+      .min(6, "Mínimo 6 caracteres"),
+    confirmPassword: z.string().min(1, "Confirma tu nueva contraseña"),
+  })
+  .refine((data) => data.newPassword === data.confirmPassword, {
+    message: "Las contraseñas no coinciden",
+    path: ["confirmPassword"],
+  });
+
 export const onboardingSchema = z
   .object({
     businessName: z.string().min(2, "Nombre del negocio requerido"),
@@ -115,6 +188,12 @@ export const appointmentSchema = z.object({
 
 export type LoginValues = z.infer<typeof loginSchema>;
 export type OnboardingValues = z.infer<typeof onboardingSchema>;
+export type CognitoSignupValues = z.infer<typeof cognitoSignupSchema>;
+export type CognitoConfirmValues = z.infer<typeof cognitoConfirmSchema>;
+export type CognitoLoginValues = z.infer<typeof cognitoLoginSchema>;
+export type CognitoForgotPasswordValues = z.infer<typeof cognitoForgotPasswordSchema>;
+export type CognitoResetPasswordValues = z.infer<typeof cognitoResetPasswordSchema>;
+export type RecoverOwnerPasswordValues = z.infer<typeof recoverOwnerPasswordSchema>;
 export type ProductValues = z.infer<typeof productSchema>;
 export type ServiceValues = z.infer<typeof serviceSchema>;
 export type PackageValues = z.infer<typeof packageSchema>;

@@ -6,10 +6,10 @@ import { WebviewZoomGuard } from "@/components/webview-zoom-guard";
 import "./globals.css";
 
 const APP_NAME = "Aura Studio";
-const APP_DEFAULT_TITLE = "Aura Studio — Gestión para centros estéticos";
+const APP_DEFAULT_TITLE = "Aura Studio — Gestión de citas y negocios";
 const APP_TITLE_TEMPLATE = "%s · Aura Studio";
 const APP_DESCRIPTION =
-  "Administra productos, servicios y paquetes de tu centro estético con elegancia.";
+  "Administra productos, servicios, citas y paquetes de tu negocio con elegancia.";
 
 const display = Cormorant_Garamond({
   variable: "--font-display",

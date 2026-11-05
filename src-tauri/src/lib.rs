@@ -1,6 +1,7 @@
 pub mod app_db;
 pub mod auth;
 pub mod bucket_config;
+pub mod cognito;
 pub mod commands;
 pub mod db;
 pub mod error;
@@ -60,10 +61,26 @@ pub fn run() {
                     AppState::new_postgres(pool)
                 }
             };
+
+            // Capa de Cognito: totalmente independiente de la base de datos
+            // de arriba (si falla, nunca bloquea que la app abra). Reabrir
+            // la app con un `id_token` todavía fresco no hace ninguna
+            // llamada de red; si venció, refresca en silencio una sola vez.
+            *app_state.cognito_session.lock().unwrap() =
+                cognito::resolve_session_on_startup(&config_dir);
+
             app.manage(app_state);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::cognito::cognito_signup,
+            commands::cognito::cognito_confirm_signup,
+            commands::cognito::cognito_resend_code,
+            commands::cognito::cognito_forgot_password,
+            commands::cognito::cognito_confirm_forgot_password,
+            commands::cognito::cognito_login,
+            commands::cognito::cognito_logout,
+            commands::cognito::cognito_installation_state,
             commands::auth::auth_login,
             commands::auth::auth_logout,
             commands::auth::auth_resume_session,
@@ -72,6 +89,7 @@ pub fn run() {
             commands::auth::create_staff_user,
             commands::auth::list_users,
             commands::auth::set_user_active,
+            commands::auth::auth_recover_owner_password,
             commands::business_profile::onboarding_is_complete,
             commands::business_profile::onboarding_complete_setup,
             commands::business_profile::get_business_profile,
