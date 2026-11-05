@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
 
 use crate::app_db::AppDb;
+use crate::cognito::{self, CognitoClient, CognitoSessionInfo};
 use crate::error::{AppError, AppResult};
 use crate::models::user::UserPublic;
 use crate::repositories::auth as repo;
@@ -247,5 +248,63 @@ pub async fn set_user_active(
                 .await
         }
         AppDb::Postgres(pool) => repo::postgres::set_active(pool, user_id, active).await,
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoverOwnerPasswordInput {
+    pub cognito_email: String,
+    pub cognito_password: String,
+    pub local_username: String,
+    pub new_password: String,
+}
+
+/// Recuperación del dueño local cuando olvidó su contraseña: en vez de
+/// inventar un código de recuperación nuevo, se reusa la cuenta de Cognito
+/// que ya configuró este negocio (capa totalmente aparte del login local,
+/// ver `crate::cognito`) como prueba de identidad. Se exige que el `sub` de
+/// quien se loguea coincida con el que quedó guardado en `cognito.json` al
+/// hacer el setup inicial — si no coincide, cualquier cuenta de Cognito
+/// válida (no solo la del dueño de este negocio) podría resetear la
+/// contraseña local, lo cual sería un agujero de seguridad real.
+#[tauri::command]
+pub async fn auth_recover_owner_password(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    input: RecoverOwnerPasswordInput,
+) -> AppResult<()> {
+    let config_dir = app.path().app_config_dir().map_err(|_| {
+        AppError::Internal("No se pudo resolver el directorio de configuración".into())
+    })?;
+    let marker = cognito::load_marker(&config_dir).ok_or_else(|| {
+        AppError::validation("Esta instalación no tiene una cuenta de Cognito asociada")
+    })?;
+
+    let client = CognitoClient::new();
+    let tokens = client
+        .initiate_auth_user_password(&input.cognito_email, &input.cognito_password)
+        .await?;
+    let session = CognitoSessionInfo::from_tokens(&tokens)?;
+
+    if session.sub != marker.sub {
+        return Err(AppError::validation(
+            "Esta cuenta de Cognito no es la que configuró este negocio",
+        ));
+    }
+
+    match &state.db {
+        AppDb::Sqlite(_) => {
+            state
+                .db
+                .with_sqlite(move |conn| {
+                    repo::reset_owner_password(conn, input.local_username, input.new_password)
+                })
+                .await
+        }
+        AppDb::Postgres(pool) => {
+            repo::postgres::reset_owner_password(pool, input.local_username, input.new_password)
+                .await
+        }
     }
 }

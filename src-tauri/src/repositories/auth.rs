@@ -129,6 +129,45 @@ pub fn change_password(
     Ok(())
 }
 
+/// Recuperación del usuario dueño cuando olvidó su contraseña y no hay
+/// ninguna sesión activa para pedírsela a otro owner — la identidad ya se
+/// verificó aparte (ver `commands::auth::auth_recover_owner_password`, que
+/// exige volver a loguearse con la cuenta de Cognito que configuró este
+/// negocio) antes de llegar hasta acá, así que esta función no vuelve a
+/// pedir la contraseña vieja.
+pub fn reset_owner_password(
+    conn: &mut Connection,
+    username: String,
+    new_password: String,
+) -> AppResult<()> {
+    if new_password.len() < 6 {
+        return Err(AppError::validation(
+            "La nueva contraseña debe tener al menos 6 caracteres",
+        ));
+    }
+
+    let role: String = conn
+        .query_row(
+            "SELECT role FROM users WHERE username = ?1",
+            params![username],
+            |row| row.get(0),
+        )
+        .map_err(|_| AppError::validation("No existe un usuario dueño con ese nombre de usuario"))?;
+    if role != "owner" {
+        return Err(AppError::validation(
+            "No existe un usuario dueño con ese nombre de usuario",
+        ));
+    }
+
+    let new_hash = hash_password(&new_password)?;
+    conn.execute(
+        "UPDATE users SET password_hash = ?1, updated_at = ?2 WHERE username = ?3",
+        params![new_hash, now_iso(), username],
+    )?;
+
+    Ok(())
+}
+
 pub fn create_staff(
     conn: &mut Connection,
     name: String,
@@ -300,6 +339,38 @@ pub mod postgres {
         sqlx::query("UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2")
             .bind(new_hash)
             .bind(user_id)
+            .execute(pool)
+            .await?;
+
+        Ok(())
+    }
+
+    /// Espejo directo de la versión SQLite de arriba.
+    pub async fn reset_owner_password(
+        pool: &PgPool,
+        username: String,
+        new_password: String,
+    ) -> AppResult<()> {
+        if new_password.len() < 6 {
+            return Err(AppError::validation(
+                "La nueva contraseña debe tener al menos 6 caracteres",
+            ));
+        }
+
+        let role: Option<String> = sqlx::query_scalar("SELECT role FROM users WHERE username = $1")
+            .bind(&username)
+            .fetch_optional(pool)
+            .await?;
+        if role.as_deref() != Some("owner") {
+            return Err(AppError::validation(
+                "No existe un usuario dueño con ese nombre de usuario",
+            ));
+        }
+
+        let new_hash = hash_password(&new_password)?;
+        sqlx::query("UPDATE users SET password_hash = $1, updated_at = now() WHERE username = $2")
+            .bind(new_hash)
+            .bind(username)
             .execute(pool)
             .await?;
 
