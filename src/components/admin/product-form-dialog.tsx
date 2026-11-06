@@ -20,6 +20,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { CatalogStatus } from "@/lib/catalog-status";
 import { withPhotoRollback } from "@/lib/photo-path";
+import { usePhotoUploadAvailability } from "@/lib/use-photo-upload-availability";
 import { productSchema, type ProductValues } from "@/lib/validations";
 import type { Product } from "@/types/database";
 
@@ -47,6 +48,7 @@ export function ProductFormDialog({
   const [pendingPhoto, setPendingPhoto] = useState<string | null>(null);
   const [clearPhoto, setClearPhoto] = useState(false);
   const [loading, setLoading] = useState(false);
+  const photoUploadAvailable = usePhotoUploadAvailability();
 
   const {
     register,
@@ -197,6 +199,8 @@ export function ProductFormDialog({
                 setPendingPhoto(path);
                 setClearPhoto(path === null);
               }}
+              disabled={!photoUploadAvailable}
+              disabledMessage="Configura un bucket en Ajustes > Almacenamiento para subir fotos"
             />
             <div className="space-y-2">
               <Label htmlFor="product-name">Nombre</Label>

@@ -12,6 +12,7 @@ pub mod repositories;
 pub mod state;
 pub mod storage_config;
 pub mod util;
+pub mod vendor;
 
 use tauri::Manager;
 
@@ -60,6 +61,22 @@ pub fn run() {
                     .expect("no se pudo conectar a PostgreSQL ni correr sus migraciones");
                     AppState::new_postgres(pool)
                 }
+                storage_config::StorageMode::Nube(ref nube_config) => {
+                    let password = storage_config::get_password(&nube_config.connection).expect(
+                        "no se pudo leer la contraseña de Nube del almacén de credenciales",
+                    );
+                    // Sin certificado CA: el backend gestionado usa un
+                    // certificado de una CA pública estándar, `sslmode=require`
+                    // alcanza (a diferencia de Postgres auto-hospedado, donde el
+                    // usuario puede traer su propio certificado autofirmado).
+                    let pool = tauri::async_runtime::block_on(app_db::open_postgres(
+                        &nube_config.connection,
+                        &password,
+                        None,
+                    ))
+                    .expect("no se pudo conectar a la base de datos de Nube ni correr sus migraciones");
+                    AppState::new_postgres(pool)
+                }
             };
 
             // Capa de Cognito: totalmente independiente de la base de datos
@@ -70,6 +87,32 @@ pub fn run() {
                 cognito::resolve_session_on_startup(&config_dir);
 
             app.manage(app_state);
+
+            // `zoomHotkeysEnabled: false` (tauri.conf.json) solo bloquea los
+            // atajos de teclado -- Ctrl+rueda del mouse para zoom es un
+            // comportamiento nativo de WebKitGTK que ocurre antes de que el
+            // gesto de scroll se convierta en un evento DOM, así que ni esa
+            // opción ni el listener de JS en `WebviewZoomGuard` (que sí cubre
+            // Windows/macOS) pueden interceptarlo en Linux. Se intercepta acá,
+            // al nivel del widget GTK: si el scroll viene con Ctrl presionado,
+            // se marca el evento como manejado (`Inhibit(true)`) para que
+            // WebKitGTK nunca llegue a aplicar su zoom nativo.
+            #[cfg(target_os = "linux")]
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.with_webview(|webview| {
+                    use gtk::glib::Propagation;
+                    use gtk::prelude::WidgetExt;
+
+                    webview.inner().connect_scroll_event(|_, event| {
+                        if event.state().contains(gdk::ModifierType::CONTROL_MASK) {
+                            Propagation::Stop
+                        } else {
+                            Propagation::Proceed
+                        }
+                    });
+                });
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -162,6 +205,10 @@ pub fn run() {
             commands::storage::storage_test_connection,
             commands::storage::storage_switch_mode,
             commands::storage::storage_export_local_data,
+            commands::vendor::vendor_list_businesses,
+            commands::vendor::vendor_create_business,
+            commands::vendor::vendor_connect_business,
+            commands::vendor::vendor_unlink_installation,
             commands::bucket::bucket_get_config,
             commands::bucket::bucket_test_connection,
             commands::bucket::resolve_photo_cache,

@@ -34,6 +34,7 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!src-tauri/.env.local.example
 
 # vercel
 .vercel
@@ -45,3 +46,8 @@ next-env.d.ts
 # tauri / rust
 /src-tauri/target/
 /src-tauri/gen/
+
+# backups locales de SQLite (datos, no código)
+/.backups/
+*.db
+*.db.bak*

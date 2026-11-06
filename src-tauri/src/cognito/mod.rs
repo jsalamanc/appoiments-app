@@ -22,13 +22,16 @@ use time::OffsetDateTime;
 use crate::error::{AppError, AppResult};
 
 // Outputs reales de `terraform output` en
-// `appoiments-cloud-backend/infra/environments/dev` (ambiente dev, cuenta AWS
-// 253320031976). No son secretos — son identificadores públicos, visibles
-// igual en el `issuer`/`aud` de cualquier JWT emitido — por eso van como
-// constantes acá y no en un `.env`. Si se despliega un ambiente nuevo
-// (prod), reemplazar con su propio `terraform output`.
-const USER_POOL_ID: &str = "us-east-1_WuGrzFtJk";
-const APP_CLIENT_ID: &str = "75139ek960qmgva0qn1brtusqj";
+// `appoiments-cloud-backend/infra/environments/{dev,prod}` (cuenta AWS
+// 253320031976, dos User Pools de Cognito separados). No son secretos — son
+// identificadores públicos, visibles igual en el `issuer`/`aud` de cualquier
+// JWT emitido — pero igual van por variable de entorno (resuelta en tiempo
+// de COMPILACIÓN vía `env!`, no en runtime) porque el valor correcto
+// depende de donde se compile: local (`.env.local`, ver build.rs y
+// `.env.local.example`) trae los de dev, el workflow de release trae los de
+// prod puestos directo en el step de CI.
+const USER_POOL_ID: &str = env!("COGNITO_USER_POOL_ID");
+const APP_CLIENT_ID: &str = env!("COGNITO_APP_CLIENT_ID");
 
 const KEYRING_SERVICE: &str = "com.aurastudio.cognito";
 const CONFIG_FILE_NAME: &str = "cognito.json";
@@ -483,12 +486,13 @@ impl Default for CognitoClient {
 
 // --- Resolución de sesión al arrancar la app ---------------------------------------
 
-/// Se llama una sola vez, desde `lib.rs::setup`, **después** de que la base
-/// de datos del negocio ya está abierta — un problema acá nunca debe impedir
-/// que la app abra. Devuelve `None` si no hay sesión establecida o si no se
-/// pudo recuperar (keychain vacío/corrupto, refresh token vencido), en cuyo
-/// caso el frontend va a mostrar el gate de Cognito de nuevo.
-pub fn resolve_session_on_startup(config_dir: &Path) -> Option<CognitoSessionInfo> {
+/// Núcleo compartido entre `resolve_session_on_startup` (arranque) y
+/// `ensure_fresh_id_token` (bajo demanda, para llamadas a `vendor::`): dado
+/// el marcador + tokens guardados, decide si el `id_token` sigue fresco o si
+/// hace falta refrescarlo en silencio, y devuelve la sesión resuelta junto
+/// con un `id_token` válido. Una sola implementación del refresh, no dos
+/// copias.
+async fn resolve_or_refresh(config_dir: &Path) -> Option<(CognitoSessionInfo, String)> {
     let marker = load_marker(config_dir)?;
     if !marker.established {
         return None;
@@ -499,15 +503,17 @@ pub fn resolve_session_on_startup(config_dir: &Path) -> Option<CognitoSessionInf
 
     let now = OffsetDateTime::now_utc().unix_timestamp();
     if claims.exp - now > REFRESH_MARGIN_SECONDS {
-        // Todavía fresco: nada de red al arrancar, esto es lo que hace que
-        // reabrir la app sea instantáneo.
-        return Some(CognitoSessionInfo::from_claims(&claims));
+        // Todavía fresco: nada de red, esto es lo que hace que reabrir la
+        // app (o pedir un token para `vendor::`) sea instantáneo la mayoría
+        // de las veces.
+        return Some((CognitoSessionInfo::from_claims(&claims), stored.id_token));
     }
 
     let client = CognitoClient::new();
-    match tauri::async_runtime::block_on(client.refresh(&stored.refresh_token)) {
+    match client.refresh(&stored.refresh_token).await {
         Ok(new_tokens) => {
             let refreshed_claims = decode_jwt_claims(&new_tokens.id_token).ok()?;
+            let fresh_id_token = new_tokens.id_token.clone();
             let _ = set_tokens(&AuthTokens {
                 id_token: new_tokens.id_token,
                 access_token: new_tokens.access_token,
@@ -519,7 +525,10 @@ pub fn resolve_session_on_startup(config_dir: &Path) -> Option<CognitoSessionInf
             let mut updated_marker = marker;
             updated_marker.last_login_at = now_iso();
             let _ = save_marker(config_dir, &updated_marker);
-            Some(CognitoSessionInfo::from_claims(&refreshed_claims))
+            Some((
+                CognitoSessionInfo::from_claims(&refreshed_claims),
+                fresh_id_token,
+            ))
         }
         Err(_) => {
             // El refresh token ya venció o fue revocado: la sesión de
@@ -531,6 +540,27 @@ pub fn resolve_session_on_startup(config_dir: &Path) -> Option<CognitoSessionInf
             None
         }
     }
+}
+
+/// Se llama una sola vez, desde `lib.rs::setup`, **después** de que la base
+/// de datos del negocio ya está abierta — un problema acá nunca debe impedir
+/// que la app abra. Devuelve `None` si no hay sesión establecida o si no se
+/// pudo recuperar (keychain vacío/corrupto, refresh token vencido), en cuyo
+/// caso el frontend va a mostrar el gate de Cognito de nuevo.
+pub fn resolve_session_on_startup(config_dir: &Path) -> Option<CognitoSessionInfo> {
+    tauri::async_runtime::block_on(resolve_or_refresh(config_dir)).map(|(session, _)| session)
+}
+
+/// Pide un `id_token` vigente para una llamada puntual a `vendor::` (listar
+/// negocios, conectar, etc.), refrescando en silencio si hace falta.
+/// `AppError::Unauthorized` significa "no hay sesión usable" — el frontend
+/// debe mostrar el login de la cuenta de Aura Studio de nuevo, igual que
+/// cualquier otro `Unauthorized` ya existente (`AppState::require_user`).
+pub async fn ensure_fresh_id_token(config_dir: &Path) -> AppResult<String> {
+    resolve_or_refresh(config_dir)
+        .await
+        .map(|(_, id_token)| id_token)
+        .ok_or(AppError::Unauthorized)
 }
 
 #[cfg(test)]
@@ -576,5 +606,12 @@ mod tests {
         assert_eq!(claims.exp, 9999999999);
         assert_eq!(claims.email.as_deref(), Some("a@b.com"));
         assert_eq!(claims.cognito_username.as_deref(), Some("ana"));
+    }
+
+    #[test]
+    fn ensure_fresh_id_token_without_session_is_unauthorized() {
+        let dir = temp_dir();
+        let result = tauri::async_runtime::block_on(ensure_fresh_id_token(&dir));
+        assert!(matches!(result, Err(AppError::Unauthorized)));
     }
 }

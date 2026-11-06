@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1648 928" width="1648" height="928">
+  <defs>
+    <linearGradient id="tl" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#D97748" stop-opacity="1"/>
+      <stop offset="55%" stop-color="#E89C73" stop-opacity="0.75"/>
+      <stop offset="100%" stop-color="#F3C7A6" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="bl1" x1="0%" y1="100%" x2="70%" y2="0%">
+      <stop offset="0%" stop-color="#D97748" stop-opacity="1"/>
+      <stop offset="60%" stop-color="#E8A47C" stop-opacity="0.6"/>
+      <stop offset="100%" stop-color="#F3C7A6" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="bl2" x1="0%" y1="100%" x2="100%" y2="20%">
+      <stop offset="0%" stop-color="#F0C3A0" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#F8E0C9" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="br" x1="100%" y1="100%" x2="0%" y2="0%">
+      <stop offset="0%" stop-color="#D4713F" stop-opacity="1"/>
+      <stop offset="55%" stop-color="#E89C73" stop-opacity="0.75"/>
+      <stop offset="100%" stop-color="#F3C7A6" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="rMid" x1="100%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#F0C7A4" stop-opacity="0.85"/>
+      <stop offset="100%" stop-color="#F8E0C9" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="0" y="0" width="1648" height="928" fill="#FBF0E3"/>
+
+  <path fill="url(#bl2)" d="M0,928 L0,480 C190,500 360,560 460,660 C530,730 560,820 580,928 Z"/>
+  <path fill="url(#bl1)" d="M0,928 L0,600 C120,620 220,670 280,740 C325,795 345,860 355,928 Z"/>
+
+  <path fill="url(#rMid)" d="M1648,190 C1500,250 1400,350 1420,480 C1436,590 1520,650 1648,680 Z"/>
+
+  <path fill="url(#br)" d="M1648,928 L1648,560 C1500,600 1400,660 1350,750 C1290,850 1150,900 980,928 Z"/>
+
+  <path fill="url(#tl)" d="M0,0 L530,0 C400,150 260,210 150,190 C60,175 15,250 0,330 Z"/>
+
+  <path fill="none" stroke="#F6E2CF" stroke-width="2" opacity="0.8"
+        d="M520,0 C 380,160 190,60 0,280"/>
+  <path fill="none" stroke="#F0C9A8" stroke-width="2" opacity="0.6"
+        d="M1648,540 C 1470,600 1310,500 1120,780"/>
+</svg>

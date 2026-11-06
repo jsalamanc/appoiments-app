@@ -15,3 +15,4 @@ pub mod reports;
 pub mod sales;
 pub mod services;
 pub mod storage;
+pub mod vendor;

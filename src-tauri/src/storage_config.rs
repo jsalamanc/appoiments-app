@@ -30,6 +30,9 @@ pub enum StorageMode {
     Local,
     /// Servidor PostgreSQL externo, auto-hospedado por el usuario.
     Postgres(PostgresConnectionConfig),
+    /// Base de datos gestionada por el backend de negocio (`vendor::`),
+    /// provista al conectar un negocio desde la cuenta de Aura Studio.
+    Nube(NubeConnectionConfig),
 }
 
 /// Datos de conexión no sensibles a un PostgreSQL externo. La contraseña se
@@ -89,6 +92,23 @@ impl PostgresConnectionConfig {
         }
         options
     }
+}
+
+/// Datos no sensibles de una conexión a un negocio en la nube. Envuelve los
+/// mismos campos que [`PostgresConnectionConfig`] (`#[serde(flatten)]`, así
+/// `storage.json` queda con todos los campos al mismo nivel que `mode`,
+/// igual que para Postgres) para que `open_postgres`/`set_password`/
+/// `get_password` sigan funcionando sin ningún cambio — para la capa de
+/// conexión, Nube es un Postgres más. Lo que agrega es el vínculo con el
+/// backend de negocio: a qué negocio corresponde y con qué id de instalación
+/// quedó vinculada esta máquina.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NubeConnectionConfig {
+    #[serde(flatten)]
+    pub connection: PostgresConnectionConfig,
+    pub business_id: String,
+    pub business_name: String,
+    pub installation_id: String,
 }
 
 /// Ruta donde vive (si existe) el certificado CA que el usuario subió para
@@ -178,6 +198,28 @@ mod tests {
             database: "aura".to_string(),
             username: "aura_owner".to_string(),
             sslmode: "require".to_string(),
+        });
+
+        save(&dir, &mode).expect("debe poder escribir storage.json");
+        assert_eq!(load(&dir), mode);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn save_then_load_roundtrips_nube_mode() {
+        let dir = std::env::temp_dir().join(format!("aura-storage-test-{}", uuid::Uuid::new_v4()));
+        let mode = StorageMode::Nube(NubeConnectionConfig {
+            connection: PostgresConnectionConfig {
+                host: "db.vendor.example.com".to_string(),
+                port: 5432,
+                database: "biz_123".to_string(),
+                username: "biz_123".to_string(),
+                sslmode: "require".to_string(),
+            },
+            business_id: "biz_123".to_string(),
+            business_name: "Mi Salón".to_string(),
+            installation_id: "install-abc".to_string(),
         });
 
         save(&dir, &mode).expect("debe poder escribir storage.json");

@@ -187,7 +187,13 @@ async fn run_migration_checks() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     let snapshot = aura_studio_lib::migration::read_local_snapshot(&mut conn)?;
-    let summary = aura_studio_lib::migration::write_snapshot_to_postgres(&pool, snapshot).await?;
+    let summary = aura_studio_lib::migration::write_snapshot_to_postgres(
+        &mut |_, _| {},
+        &pool,
+        snapshot,
+        false,
+    )
+    .await?;
     if summary.customers != 1 || summary.appointments != 1 || summary.sales != 1 || summary.users != 1 {
         return Err(format!("BUG: conteos de migración inesperados: {summary:?}").into());
     }
@@ -214,7 +220,14 @@ async fn run_migration_checks() -> Result<(), Box<dyn std::error::Error>> {
     let mut conn2 = rusqlite::Connection::open_in_memory()?;
     aura_studio_lib::db::migrations().to_latest(&mut conn2)?;
     let empty_snapshot = aura_studio_lib::migration::read_local_snapshot(&mut conn2)?;
-    match aura_studio_lib::migration::write_snapshot_to_postgres(&pool, empty_snapshot).await {
+    match aura_studio_lib::migration::write_snapshot_to_postgres(
+        &mut |_, _| {},
+        &pool,
+        empty_snapshot,
+        false,
+    )
+    .await
+    {
         Err(e) if e.to_string().contains("no está vacía") => {
             println!("✓ la migración rechaza un destino que ya tiene datos: {e}")
         }

@@ -21,6 +21,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import type { CatalogStatus } from "@/lib/catalog-status";
 import { withPhotoRollback } from "@/lib/photo-path";
+import { usePhotoUploadAvailability } from "@/lib/use-photo-upload-availability";
 import { serviceSchema, type ServiceValues } from "@/lib/validations";
 import type { Service } from "@/types/database";
 
@@ -49,6 +50,7 @@ export function ServiceFormDialog({
   const [pendingPhoto, setPendingPhoto] = useState<string | null>(null);
   const [clearPhoto, setClearPhoto] = useState(false);
   const [loading, setLoading] = useState(false);
+  const photoUploadAvailable = usePhotoUploadAvailability();
 
   const {
     register,
@@ -188,6 +190,8 @@ export function ServiceFormDialog({
                 setPendingPhoto(path);
                 setClearPhoto(path === null);
               }}
+              disabled={!photoUploadAvailable}
+              disabledMessage="Configura un bucket en Ajustes > Almacenamiento para subir fotos"
             />
             <div className="space-y-2">
               <Label htmlFor="service-name">Nombre</Label>

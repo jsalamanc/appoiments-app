@@ -11,6 +11,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+dotenvy = "0.15"
 
 [dependencies]
 tauri = { version = "2", features = ["protocol-asset"] }
@@ -35,6 +36,17 @@ base64 = "0.22"
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]
+
+# `zoomHotkeysEnabled: false` en tauri.conf.json solo bloquea los atajos de
+# teclado (Ctrl/Cmd +/-/0) -- Ctrl+rueda del mouse para zoom es un
+# comportamiento nativo de WebKitGTK que ni esa opción ni un listener de JS
+# con `preventDefault()` pueden interceptar (el gesto de scroll nunca llega a
+# convertirse en un evento DOM). Hace falta interceptarlo al nivel de GTK
+# mismo, ver `lib.rs::run`.
+[target.'cfg(target_os = "linux")'.dependencies]
+webkit2gtk = "2.0"
+gtk = "0.18"
+gdk = "0.18"
 
 [profile.release]
 lto = "thin"

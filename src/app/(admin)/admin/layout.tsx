@@ -37,7 +37,7 @@ export default function AdminLayout({
   if (!ready || !authorized) return null;
 
   return (
-    <div className="flex h-dvh flex-col overflow-hidden lg:flex-row">
+    <div className="admin-shell flex h-dvh flex-col overflow-hidden lg:flex-row">
       <AdminSidebar />
       <main className="min-h-0 flex-1 overflow-y-auto">
         <div className="print-hidden">

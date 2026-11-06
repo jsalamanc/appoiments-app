@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
+import { UserMenu } from "@/components/admin/user-menu";
 
 export function NetworkStatusHeader() {
   const [online, setOnline] = useState(true);
@@ -21,7 +22,7 @@ export function NetworkStatusHeader() {
 
   return (
     <header className="sticky top-0 z-20 border-b border-border/50 bg-background/55 px-4 py-3 backdrop-blur-xl backdrop-saturate-150 md:px-8">
-      <div className="mx-auto flex max-w-5xl items-center justify-end">
+      <div className="mx-auto flex max-w-5xl items-center justify-end gap-3">
         {online ? (
           <Badge variant="secondary" className="gap-1.5">
             <span
@@ -39,6 +40,7 @@ export function NetworkStatusHeader() {
             Offline
           </Badge>
         )}
+        <UserMenu />
       </div>
     </header>
   );
