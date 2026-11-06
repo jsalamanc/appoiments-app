@@ -11,21 +11,11 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { loginDisplayFont, loginSansFont } from "@/lib/fonts";
+import { CognitoAuthFlow } from "@/components/cognito/cognito-auth-flow";
 import {
-  cognitoConfirmSchema,
-  cognitoForgotPasswordSchema,
-  cognitoLoginSchema,
-  cognitoResetPasswordSchema,
-  cognitoSignupSchema,
   loginSchema,
   onboardingSchema,
   recoverOwnerPasswordSchema,
-  type CognitoConfirmValues,
-  type CognitoForgotPasswordValues,
-  type CognitoLoginValues,
-  type CognitoResetPasswordValues,
-  type CognitoSignupValues,
   type LoginValues,
   type OnboardingValues,
   type RecoverOwnerPasswordValues,
@@ -45,20 +35,47 @@ type CognitoInstallationState = {
 
 type Stage =
   | "loading"
-  | "cognito-login"
-  | "cognito-signup"
-  | "cognito-confirm"
-  | "cognito-forgot"
-  | "cognito-reset"
+  | "cognito"
   | "onboarding"
   | "login"
   | "recover-owner-password"
   | "redirecting";
 
+// Mismo fondo para el Shell normal y el splash de carga (abajo) — un solo
+// lugar para no desalinear las dos vistas si el fondo cambia más adelante.
+const LOGIN_BACKGROUND_STYLE: React.CSSProperties = {
+  backgroundImage: "url(/login-background.svg)",
+  backgroundSize: "cover",
+  backgroundPosition: "center",
+  backgroundRepeat: "no-repeat",
+};
+
+/**
+ * Se ve por una fracción de segundo al abrir la app, mientras `Home` decide a
+ * qué stage ir (cognito/onboarding/login/admin) — antes de esto, la ventana
+ * nativa mostraba un pantallazo en blanco (el color de fondo por defecto del
+ * WebView) hasta que React termina de hidratar. El `backgroundColor` de
+ * `tauri.conf.json` ya evita el blanco puro a nivel de ventana; esto cubre el
+ * instante siguiente, ya con contenido real.
+ */
+function SplashScreen() {
+  return (
+    <main
+      className="login-view relative flex min-h-screen items-center justify-center overflow-hidden bg-background text-foreground antialiased"
+      style={LOGIN_BACKGROUND_STYLE}
+    >
+      <span className="font-heading text-6xl font-medium tracking-tight sm:text-7xl">
+        Aura <span className="italic text-primary">Studio</span>
+      </span>
+    </main>
+  );
+}
+
 function Shell({ children }: { children: React.ReactNode }) {
   return (
     <main
-      className={`login-view ${loginDisplayFont.variable} ${loginSansFont.variable} relative flex min-h-screen items-center justify-center overflow-hidden bg-background px-4 py-12 text-foreground antialiased`}
+      className="login-view relative flex min-h-screen items-center justify-center overflow-hidden bg-background px-4 py-12 text-foreground antialiased"
+      style={LOGIN_BACKGROUND_STYLE}
     >
       {/* gradient blobs — mismo tratamiento que el hero de aura-studio-landing */}
       <div aria-hidden className="pointer-events-none absolute inset-0 -z-10">
@@ -79,480 +96,6 @@ function Shell({ children }: { children: React.ReactNode }) {
         {children}
       </motion.div>
     </main>
-  );
-}
-
-function CognitoSignupForm({
-  onNeedsConfirmation,
-  onConfirmedDirectly,
-  onSwitchToLogin,
-}: {
-  onNeedsConfirmation: (email: string) => void;
-  onConfirmedDirectly: (email: string) => void;
-  onSwitchToLogin: () => void;
-}) {
-  const [loading, setLoading] = useState(false);
-  const {
-    register,
-    handleSubmit,
-    formState: { errors },
-  } = useForm<CognitoSignupValues>({
-    resolver: zodResolver(cognitoSignupSchema),
-    defaultValues: { email: "", password: "", confirmPassword: "" },
-  });
-
-  const onSubmit = async (values: CognitoSignupValues) => {
-    setLoading(true);
-    try {
-      // El User Pool usa el correo como usuario (`username_attributes =
-      // ["email"]` en el backend) — por eso `username` y `email` llevan el
-      // mismo valor acá, no hay un "usuario" separado que elegir.
-      const result = await invoke<{ needsConfirmation: boolean }>("cognito_signup", {
-        input: {
-          username: values.email,
-          email: values.email,
-          password: values.password,
-        },
-      });
-      if (result.needsConfirmation) {
-        toast.success("Te enviamos un código de confirmación a tu correo");
-        onNeedsConfirmation(values.email);
-      } else {
-        onConfirmedDirectly(values.email);
-      }
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <>
-      <h1 className="mt-6 font-heading text-3xl font-semibold">
-        Crea tu cuenta
-      </h1>
-      <p className="mt-2 text-sm text-muted-foreground">
-        Esta cuenta administra tu negocio y tu suscripción en la nube.
-      </p>
-      <form onSubmit={handleSubmit(onSubmit)} className="mt-8 space-y-4">
-        <div className="space-y-2">
-          <Label htmlFor="cognitoSignupEmail">Correo electrónico</Label>
-          <Input
-            id="cognitoSignupEmail"
-            type="email"
-            autoComplete="email"
-            {...register("email")}
-          />
-          {errors.email && (
-            <p className="text-xs text-destructive">{errors.email.message}</p>
-          )}
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="cognitoSignupPassword">Contraseña</Label>
-          <Input
-            id="cognitoSignupPassword"
-            type="password"
-            autoComplete="new-password"
-            {...register("password")}
-          />
-          {errors.password && (
-            <p className="text-xs text-destructive">{errors.password.message}</p>
-          )}
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="cognitoSignupConfirmPassword">Confirmar contraseña</Label>
-          <Input
-            id="cognitoSignupConfirmPassword"
-            type="password"
-            autoComplete="new-password"
-            {...register("confirmPassword")}
-          />
-          {errors.confirmPassword && (
-            <p className="text-xs text-destructive">
-              {errors.confirmPassword.message}
-            </p>
-          )}
-        </div>
-        <Button type="submit" className="w-full" disabled={loading}>
-          {loading ? "Creando..." : "Crear cuenta"}
-        </Button>
-      </form>
-      <button
-        type="button"
-        onClick={onSwitchToLogin}
-        className="mt-4 w-full text-center text-sm text-muted-foreground underline-offset-4 hover:underline"
-      >
-        ¿Ya tienes cuenta? Inicia sesión
-      </button>
-    </>
-  );
-}
-
-function CognitoConfirmForm({
-  email,
-  onConfirmed,
-  onChangeEmail,
-}: {
-  email: string;
-  onConfirmed: (email: string) => void;
-  onChangeEmail: () => void;
-}) {
-  const [loading, setLoading] = useState(false);
-  const [resendCooldown, setResendCooldown] = useState(0);
-  const {
-    register,
-    handleSubmit,
-    formState: { errors },
-  } = useForm<CognitoConfirmValues>({
-    resolver: zodResolver(cognitoConfirmSchema),
-    defaultValues: { code: "" },
-  });
-
-  useEffect(() => {
-    if (resendCooldown <= 0) return;
-    const timer = setInterval(() => {
-      setResendCooldown((value) => Math.max(0, value - 1));
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [resendCooldown]);
-
-  const onSubmit = async (values: CognitoConfirmValues) => {
-    setLoading(true);
-    try {
-      await invoke("cognito_confirm_signup", { input: { username: email, code: values.code } });
-      toast.success("Cuenta confirmada, ya puedes iniciar sesión");
-      onConfirmed(email);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const onResend = async () => {
-    try {
-      await invoke("cognito_resend_code", { input: { username: email } });
-      toast.success("Código reenviado");
-      setResendCooldown(30);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err));
-    }
-  };
-
-  return (
-    <>
-      <h1 className="mt-6 font-heading text-3xl font-semibold">
-        Confirma tu correo
-      </h1>
-      <p className="mt-2 text-sm text-muted-foreground">
-        Te enviamos un código a{" "}
-        <span className="font-medium text-foreground">{email}</span>. Ingresa
-        el código para confirmar la cuenta.
-      </p>
-      <form onSubmit={handleSubmit(onSubmit)} className="mt-8 space-y-4">
-        <div className="space-y-2">
-          <Label htmlFor="confirmCode">Código</Label>
-          <Input id="confirmCode" autoComplete="one-time-code" {...register("code")} />
-          {errors.code && (
-            <p className="text-xs text-destructive">{errors.code.message}</p>
-          )}
-        </div>
-        <Button type="submit" className="w-full" disabled={loading}>
-          {loading ? "Confirmando..." : "Confirmar"}
-        </Button>
-      </form>
-      <button
-        type="button"
-        onClick={onResend}
-        disabled={resendCooldown > 0}
-        className="mt-4 w-full text-center text-sm text-muted-foreground underline-offset-4 hover:underline disabled:opacity-50"
-      >
-        {resendCooldown > 0
-          ? `Reenviar código (${resendCooldown}s)`
-          : "Reenviar código"}
-      </button>
-      <button
-        type="button"
-        onClick={onChangeEmail}
-        className="mt-2 w-full text-center text-sm text-muted-foreground underline-offset-4 hover:underline"
-      >
-        ¿Correo incorrecto? Regístrate de nuevo
-      </button>
-    </>
-  );
-}
-
-function CognitoLoginForm({
-  prefillEmail,
-  onLoggedIn,
-  onSwitchToSignup,
-  onForgotPassword,
-}: {
-  prefillEmail: string;
-  onLoggedIn: () => void;
-  onSwitchToSignup: () => void;
-  onForgotPassword: () => void;
-}) {
-  const [loading, setLoading] = useState(false);
-  const {
-    register,
-    handleSubmit,
-    formState: { errors },
-  } = useForm<CognitoLoginValues>({
-    resolver: zodResolver(cognitoLoginSchema),
-    defaultValues: { email: prefillEmail, password: "" },
-  });
-
-  const onSubmit = async (values: CognitoLoginValues) => {
-    setLoading(true);
-    try {
-      // Cognito usa el correo como usuario en este User Pool — se manda en
-      // el campo `username` del comando porque así se llama el parámetro
-      // de la API de Cognito, no porque sea distinto del correo.
-      await invoke("cognito_login", {
-        input: { username: values.email, password: values.password },
-      });
-      onLoggedIn();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <>
-      <h1 className="mt-6 font-heading text-3xl font-semibold">
-        Inicia sesión
-      </h1>
-      <p className="mt-2 text-sm text-muted-foreground">
-        Es la primera vez que abres Aura Studio en este equipo. Inicia sesión
-        con la cuenta que administra tu negocio.
-      </p>
-      <form onSubmit={handleSubmit(onSubmit)} className="mt-8 space-y-4">
-        <div className="space-y-2">
-          <Label htmlFor="cognitoLoginEmail">Correo electrónico</Label>
-          <Input
-            id="cognitoLoginEmail"
-            type="email"
-            autoComplete="email"
-            {...register("email")}
-          />
-          {errors.email && (
-            <p className="text-xs text-destructive">{errors.email.message}</p>
-          )}
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="cognitoLoginPassword">Contraseña</Label>
-          <Input
-            id="cognitoLoginPassword"
-            type="password"
-            autoComplete="current-password"
-            {...register("password")}
-          />
-          {errors.password && (
-            <p className="text-xs text-destructive">{errors.password.message}</p>
-          )}
-        </div>
-        <Button type="submit" className="w-full" disabled={loading}>
-          {loading ? "Entrando..." : "Entrar"}
-        </Button>
-      </form>
-      <button
-        type="button"
-        onClick={onForgotPassword}
-        className="mt-4 w-full text-center text-sm text-muted-foreground underline-offset-4 hover:underline"
-      >
-        ¿Olvidaste tu contraseña?
-      </button>
-      <button
-        type="button"
-        onClick={onSwitchToSignup}
-        className="mt-2 w-full text-center text-sm text-muted-foreground underline-offset-4 hover:underline"
-      >
-        ¿No tienes cuenta? Regístrate
-      </button>
-    </>
-  );
-}
-
-function CognitoForgotPasswordForm({
-  prefillEmail,
-  onCodeSent,
-  onBackToLogin,
-}: {
-  prefillEmail: string;
-  onCodeSent: (email: string) => void;
-  onBackToLogin: () => void;
-}) {
-  const [loading, setLoading] = useState(false);
-  const {
-    register,
-    handleSubmit,
-    formState: { errors },
-  } = useForm<CognitoForgotPasswordValues>({
-    resolver: zodResolver(cognitoForgotPasswordSchema),
-    defaultValues: { email: prefillEmail },
-  });
-
-  const onSubmit = async (values: CognitoForgotPasswordValues) => {
-    setLoading(true);
-    try {
-      await invoke("cognito_forgot_password", { input: { username: values.email } });
-      toast.success("Si la cuenta existe, te enviamos un código para restablecer la contraseña");
-      onCodeSent(values.email);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <>
-      <h1 className="mt-6 font-heading text-3xl font-semibold">
-        Recupera tu contraseña
-      </h1>
-      <p className="mt-2 text-sm text-muted-foreground">
-        Ingresa tu correo y te enviamos un código para restablecerla.
-      </p>
-      <form onSubmit={handleSubmit(onSubmit)} className="mt-8 space-y-4">
-        <div className="space-y-2">
-          <Label htmlFor="forgotEmail">Correo electrónico</Label>
-          <Input
-            id="forgotEmail"
-            type="email"
-            autoComplete="email"
-            {...register("email")}
-          />
-          {errors.email && (
-            <p className="text-xs text-destructive">{errors.email.message}</p>
-          )}
-        </div>
-        <Button type="submit" className="w-full" disabled={loading}>
-          {loading ? "Enviando..." : "Enviar código"}
-        </Button>
-      </form>
-      <button
-        type="button"
-        onClick={onBackToLogin}
-        className="mt-4 w-full text-center text-sm text-muted-foreground underline-offset-4 hover:underline"
-      >
-        Volver a iniciar sesión
-      </button>
-    </>
-  );
-}
-
-function CognitoResetPasswordForm({
-  email,
-  onReset,
-}: {
-  email: string;
-  onReset: () => void;
-}) {
-  const [loading, setLoading] = useState(false);
-  const [resendCooldown, setResendCooldown] = useState(0);
-  const {
-    register,
-    handleSubmit,
-    formState: { errors },
-  } = useForm<CognitoResetPasswordValues>({
-    resolver: zodResolver(cognitoResetPasswordSchema),
-    defaultValues: { code: "", newPassword: "", confirmPassword: "" },
-  });
-
-  useEffect(() => {
-    if (resendCooldown <= 0) return;
-    const timer = setInterval(() => {
-      setResendCooldown((value) => Math.max(0, value - 1));
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [resendCooldown]);
-
-  const onSubmit = async (values: CognitoResetPasswordValues) => {
-    setLoading(true);
-    try {
-      await invoke("cognito_confirm_forgot_password", {
-        input: { username: email, code: values.code, newPassword: values.newPassword },
-      });
-      toast.success("Contraseña actualizada, ya puedes iniciar sesión");
-      onReset();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const onResend = async () => {
-    try {
-      await invoke("cognito_forgot_password", { input: { username: email } });
-      toast.success("Código reenviado");
-      setResendCooldown(30);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err));
-    }
-  };
-
-  return (
-    <>
-      <h1 className="mt-6 font-heading text-3xl font-semibold">
-        Ingresa el código
-      </h1>
-      <p className="mt-2 text-sm text-muted-foreground">
-        Revisa tu correo y define una nueva contraseña.
-      </p>
-      <form onSubmit={handleSubmit(onSubmit)} className="mt-8 space-y-4">
-        <div className="space-y-2">
-          <Label htmlFor="resetCode">Código</Label>
-          <Input id="resetCode" autoComplete="one-time-code" {...register("code")} />
-          {errors.code && (
-            <p className="text-xs text-destructive">{errors.code.message}</p>
-          )}
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="resetNewPassword">Nueva contraseña</Label>
-          <Input
-            id="resetNewPassword"
-            type="password"
-            autoComplete="new-password"
-            {...register("newPassword")}
-          />
-          {errors.newPassword && (
-            <p className="text-xs text-destructive">{errors.newPassword.message}</p>
-          )}
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="resetConfirmPassword">Confirmar contraseña</Label>
-          <Input
-            id="resetConfirmPassword"
-            type="password"
-            autoComplete="new-password"
-            {...register("confirmPassword")}
-          />
-          {errors.confirmPassword && (
-            <p className="text-xs text-destructive">
-              {errors.confirmPassword.message}
-            </p>
-          )}
-        </div>
-        <Button type="submit" className="w-full" disabled={loading}>
-          {loading ? "Guardando..." : "Restablecer contraseña"}
-        </Button>
-      </form>
-      <button
-        type="button"
-        onClick={onResend}
-        disabled={resendCooldown > 0}
-        className="mt-4 w-full text-center text-sm text-muted-foreground underline-offset-4 hover:underline disabled:opacity-50"
-      >
-        {resendCooldown > 0
-          ? `Reenviar código (${resendCooldown}s)`
-          : "Reenviar código"}
-      </button>
-    </>
   );
 }
 
@@ -887,7 +430,6 @@ function RecoverOwnerPasswordForm({ onBackToLogin }: { onBackToLogin: () => void
 export default function Home() {
   const router = useRouter();
   const [stage, setStage] = useState<Stage>("loading");
-  const [cognitoPendingEmail, setCognitoPendingEmail] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -903,7 +445,7 @@ export default function Home() {
         // Instalación genuinamente nueva: el gate de Cognito se pide acá,
         // una sola vez. Una instalación que ya tenía el onboarding completo
         // de antes de este cambio nunca llega a esta rama.
-        setStage(cognitoState.session ? "onboarding" : "cognito-login");
+        setStage(cognitoState.session ? "onboarding" : "cognito");
         return;
       }
 
@@ -940,53 +482,13 @@ export default function Home() {
   }, [router]);
 
   if (stage === "loading" || stage === "redirecting") {
-    return <Shell>{null}</Shell>;
+    return <SplashScreen />;
   }
 
   return (
     <Shell>
-      {stage === "cognito-signup" ? (
-        <CognitoSignupForm
-          onNeedsConfirmation={(email) => {
-            setCognitoPendingEmail(email);
-            setStage("cognito-confirm");
-          }}
-          onConfirmedDirectly={(email) => {
-            setCognitoPendingEmail(email);
-            setStage("cognito-login");
-          }}
-          onSwitchToLogin={() => setStage("cognito-login")}
-        />
-      ) : stage === "cognito-confirm" ? (
-        <CognitoConfirmForm
-          email={cognitoPendingEmail}
-          onConfirmed={(email) => {
-            setCognitoPendingEmail(email);
-            setStage("cognito-login");
-          }}
-          onChangeEmail={() => setStage("cognito-signup")}
-        />
-      ) : stage === "cognito-login" ? (
-        <CognitoLoginForm
-          prefillEmail={cognitoPendingEmail}
-          onLoggedIn={() => setStage("onboarding")}
-          onSwitchToSignup={() => setStage("cognito-signup")}
-          onForgotPassword={() => setStage("cognito-forgot")}
-        />
-      ) : stage === "cognito-forgot" ? (
-        <CognitoForgotPasswordForm
-          prefillEmail={cognitoPendingEmail}
-          onCodeSent={(email) => {
-            setCognitoPendingEmail(email);
-            setStage("cognito-reset");
-          }}
-          onBackToLogin={() => setStage("cognito-login")}
-        />
-      ) : stage === "cognito-reset" ? (
-        <CognitoResetPasswordForm
-          email={cognitoPendingEmail}
-          onReset={() => setStage("cognito-login")}
-        />
+      {stage === "cognito" ? (
+        <CognitoAuthFlow onAuthenticated={() => setStage("onboarding")} />
       ) : stage === "onboarding" ? (
         <OnboardingForm onDone={() => router.push("/admin")} />
       ) : stage === "recover-owner-password" ? (

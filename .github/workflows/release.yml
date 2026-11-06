@@ -49,6 +49,14 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # build.rs las exige para compilar (ver src-tauri/build.rs) -- no
+          # son secretos (identificadores publicos de AWS), por eso van como
+          # Variables del repo, no Secrets. Apuntan al ambiente de
+          # PRODUCCION (appoiments-cloud-backend/infra/environments/prod):
+          # esto es lo que termina en el instalador que descarga un cliente.
+          COGNITO_USER_POOL_ID: ${{ vars.COGNITO_USER_POOL_ID }}
+          COGNITO_APP_CLIENT_ID: ${{ vars.COGNITO_APP_CLIENT_ID }}
+          VENDOR_API_BASE_URL: ${{ vars.VENDOR_API_BASE_URL }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Aura Studio __VERSION__"

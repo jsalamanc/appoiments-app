@@ -283,6 +283,9 @@ version = "0.7.1"
 dependencies = [
  "argon2",
  "base64 0.22.1",
+ "dotenvy",
+ "gdk",
+ "gtk",
  "keyring",
  "rand",
  "reqwest",
@@ -301,6 +304,7 @@ dependencies = [
  "thiserror 1.0.69",
  "time",
  "uuid",
+ "webkit2gtk",
 ]
 
 [[package]]

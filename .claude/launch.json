@@ -6,6 +6,15 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],
       "port": 3000
+    },
+    {
+      "name": "landing-dev",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-lc",
+        "cd /home/jsalamanc/Documentos/projects/aura-studio-landing && npx next dev --port 3100"
+      ],
+      "port": 3100
     }
   ]
 }

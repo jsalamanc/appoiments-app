@@ -129,13 +129,14 @@
   }
 }
 
-/* Vista de login/onboarding — paleta y tipografía de aura-studio-landing (el
-   sitio público), migradas acá primero porque es la puerta de entrada de la
-   app. A propósito, acotado a `.login-view`: las variables de tema del resto
-   de la app (`:root` de arriba, usadas en el panel de administración) no se
-   tocan — es una migración modular, el resto de la app sigue con su paleta
-   actual hasta que se decida extenderla. */
-.login-view {
+/* Paleta y tipografía de aura-studio-landing — migradas primero a
+   login/onboarding (`.login-view`) y ahora también al panel administrativo
+   (`.admin-shell`, ver `(admin)/admin/layout.tsx`): mismo bloque de
+   variables para las dos, un solo lugar que editar si la paleta cambia más
+   adelante. `:root` de arriba queda como fallback para cualquier vista que
+   no use ninguna de las dos clases. */
+.login-view,
+.admin-shell {
   --background: oklch(0.975 0.012 75);
   --foreground: oklch(0.24 0.025 45);
   --card: oklch(0.99 0.008 75);
@@ -157,15 +158,28 @@
   --radius: 1.1rem;
   /* `--font-display`/`--font-body` son los tokens que ya resuelven
      `font-heading`/`font-sans` en `@theme inline` de arriba — redirigirlos
-     acá alcanza para que los títulos y el texto de esta vista usen Fraunces
-     y Geist sin cambiar nada fuera de `.login-view`. */
+     acá alcanza para que los títulos y el texto de ambas vistas usen
+     Fraunces y Geist, sin cambiar nada fuera de `.login-view`/`.admin-shell`
+     (el resto de la app, si lo hay, sigue con Cormorant Garamond + Nunito). */
   --font-display: var(--font-login-display);
   --font-body: var(--font-login-sans);
   font-family: var(--font-sans);
   background-image: none;
 }
 
-.dark .login-view {
+/* Fondo propio del panel (distinto al de `.login-view`, que conserva el
+   suyo) -- va en una regla aparte, después del bloque compartido de arriba,
+   para ganarle en orden de aparición a su `background-image: none` sin
+   necesidad de `!important` (misma especificidad, gana la última regla). */
+.admin-shell {
+  background-image: url(/admin-background.svg);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+.dark .login-view,
+.dark .admin-shell {
   --background: oklch(0.19 0.018 50);
   --foreground: oklch(0.96 0.012 75);
   --card: oklch(0.23 0.02 48);

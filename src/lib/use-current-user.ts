@@ -3,7 +3,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 
-export type CurrentUser = { id: string; role: string } | null;
+export type CurrentUser = { id: string; name: string; role: string } | null;
 
 /**
  * Usuario de la sesión actual, para decisiones de UI que dependen del rol
