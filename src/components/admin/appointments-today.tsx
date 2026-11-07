@@ -33,6 +33,8 @@ import type {
   AppointmentStatus,
   AppointmentWithDetails,
 } from "@/types/database";
+import { ContentSkeleton, SkeletonRegion } from "@/components/admin/skeletons";
+import { useMinLoadingElapsed } from "@/lib/use-min-loading";
 
 function normalizeDocument(value: string) {
   return value.toLowerCase().replace(/[\s.\-]/g, "");
@@ -44,6 +46,7 @@ export function AppointmentsToday() {
     []
   );
   const [loading, setLoading] = useState(true);
+  const minElapsed = useMinLoadingElapsed();
   const [busyId, setBusyId] = useState<string | null>(null);
   const [documentQuery, setDocumentQuery] = useState("");
   const [page, setPage] = useState(1);
@@ -149,8 +152,10 @@ export function AppointmentsToday() {
         </div>
       </FadeIn>
 
-      {loading ? (
-        <p className="text-sm text-muted-foreground">Cargando citas de hoy...</p>
+      {loading || !minElapsed ? (
+        <SkeletonRegion label="Cargando citas de hoy…">
+          <ContentSkeleton />
+        </SkeletonRegion>
       ) : appointments.length === 0 ? (
         <EmptyState
           title="No hay citas para hoy"

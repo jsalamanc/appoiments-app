@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { FadeIn } from "@/components/motion/fade-in";
 import { Button } from "@/components/ui/button";
 import { MODULE_META, type ModuleKey } from "@/lib/modules";
+import { PageSkeleton } from "@/components/admin/skeletons";
 
 type ModuleGateProps = {
   module: ModuleKey;
@@ -31,7 +32,7 @@ export function ModuleGate({ module, children }: ModuleGateProps) {
     };
   }, []);
 
-  if (!modules) return null;
+  if (!modules) return <PageSkeleton />;
   if (modules[module]) {
     return <>{children}</>;
   }

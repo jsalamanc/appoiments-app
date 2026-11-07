@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { FadeIn } from "@/components/motion/fade-in";
 import { Button } from "@/components/ui/button";
 import { isOwnerRole } from "@/lib/roles";
+import { PageSkeleton } from "@/components/admin/skeletons";
 
 type CurrentUser = { role: string } | null;
 
@@ -27,7 +28,7 @@ export function OwnerGate({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  if (!loaded) return null;
+  if (!loaded) return <PageSkeleton />;
 
   if (isOwnerRole(user?.role)) {
     return <>{children}</>;

@@ -1,6 +1,7 @@
-//! La conexión de datos activa de la aplicación: SQLite local (hoy) o
-//! PostgreSQL externo (self-hosted), según el modo elegido en
-//! Ajustes → Almacenamiento de datos (ver [`crate::storage_config`]).
+//! La conexión de datos activa de la aplicación: SQLite local, o PostgreSQL
+//! gestionado por el backend de negocio al conectar una cuenta de Nube, según
+//! el modo elegido en Ajustes → Almacenamiento de datos (ver
+//! [`crate::storage_config`]).
 //!
 //! Desde la Fase 1 del issue #9, `AppState.db` es un `AppDb` en vez de un
 //! `Mutex<Connection>` crudo. El modo local sigue siendo igual de SQLite: el
@@ -9,7 +10,6 @@
 //! la capa de `repositories/` pueda despachar a PostgreSQL en la Fase 2 sin
 //! volver a tocar cada comando.
 
-use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use sqlx::migrate::Migrator;
@@ -56,19 +56,16 @@ impl AppDb {
 static POSTGRES_MIGRATOR: Migrator = sqlx::migrate!("migrations/postgres");
 
 /// Abre un pool de conexiones a PostgreSQL y corre las migraciones pendientes
-/// contra él. Usado por `storage_test_connection`/`storage_switch_mode`
-/// (Fase 3) para validar y preparar una base externa antes de adoptarla, y
-/// por `lib.rs::setup` al arrancar en modo Postgres. `ca_cert_path` solo
-/// hace falta si `sslmode` es `verify-ca`/`verify-full` contra un servidor
-/// con certificado autofirmado o de una CA privada.
+/// contra él. Usado por `storage_switch_mode` para preparar la base de un
+/// negocio de Nube antes de adoptarla, y por `lib.rs::setup` al arrancar ya
+/// conectado a uno.
 pub async fn open_postgres(
     config: &PostgresConnectionConfig,
     password: &str,
-    ca_cert_path: Option<&Path>,
 ) -> Result<PgPool, sqlx::Error> {
     let pool = PgPoolOptions::new()
         .max_connections(5)
-        .connect_with(config.connect_options(password, ca_cert_path))
+        .connect_with(config.connect_options(password))
         .await?;
 
     POSTGRES_MIGRATOR.run(&pool).await?;

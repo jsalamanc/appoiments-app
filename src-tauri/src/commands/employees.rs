@@ -2,6 +2,7 @@ use serde::Deserialize;
 use tauri::State;
 
 use crate::app_db::AppDb;
+use crate::audit;
 use crate::error::AppResult;
 use crate::models::employee::Employee;
 use crate::repositories::employees as repo;
@@ -36,11 +37,14 @@ pub async fn create_employee(
     state: State<'_, AppState>,
     input: EmployeeInput,
 ) -> AppResult<Employee> {
-    state.require_owner()?;
-    match &state.db {
+    let actor = state.require_owner()?;
+    let tracker = audit::Tracker::start(&state.db, &actor, "employee.create", "employees", None, &[]).await;
+    let result = match &state.db {
         AppDb::Sqlite(_) => state.db.with_sqlite(move |conn| repo::create(conn, input)).await,
         AppDb::Postgres(pool) => repo::postgres::create(pool, input).await,
-    }
+    }?;
+    tracker.finish_created("Creó empleado", &result.id).await;
+    Ok(result)
 }
 
 #[tauri::command]
@@ -49,8 +53,9 @@ pub async fn update_employee(
     id: String,
     input: EmployeeInput,
 ) -> AppResult<Employee> {
-    state.require_owner()?;
-    match &state.db {
+    let actor = state.require_owner()?;
+    let tracker = audit::Tracker::start(&state.db, &actor, "employee.update", "employees", Some(&id), &[]).await;
+    let result = match &state.db {
         AppDb::Sqlite(_) => {
             state
                 .db
@@ -58,7 +63,9 @@ pub async fn update_employee(
                 .await
         }
         AppDb::Postgres(pool) => repo::postgres::update(pool, id, input).await,
-    }
+    }?;
+    tracker.finish("Actualizó empleado").await;
+    Ok(result)
 }
 
 /// Falla con un mensaje claro si el empleado tiene citas asociadas: el
@@ -71,9 +78,12 @@ pub async fn update_employee(
 /// vez de eliminar.
 #[tauri::command]
 pub async fn delete_employee(state: State<'_, AppState>, id: String) -> AppResult<()> {
-    state.require_owner()?;
-    match &state.db {
+    let actor = state.require_owner()?;
+    let tracker = audit::Tracker::start(&state.db, &actor, "employee.delete", "employees", Some(&id), &[("employee_commission_rates", "employee_id"), ("employee_availability", "employee_id")]).await;
+    let result = match &state.db {
         AppDb::Sqlite(_) => state.db.with_sqlite(move |conn| repo::delete(conn, id)).await,
         AppDb::Postgres(pool) => repo::postgres::delete(pool, id).await,
-    }
+    }?;
+    tracker.finish_deleted("Eliminó empleado").await;
+    Ok(result)
 }

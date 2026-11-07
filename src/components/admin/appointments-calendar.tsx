@@ -48,6 +48,8 @@ import type {
   AppointmentWithDetails,
   Employee,
 } from "@/types/database";
+import { CalendarSkeleton } from "@/components/admin/skeletons";
+import { useMinLoadingElapsed } from "@/lib/use-min-loading";
 
 const DAY_START_HOUR = 8;
 const DAY_END_HOUR = 20;
@@ -98,6 +100,7 @@ export function AppointmentsCalendar() {
     []
   );
   const [loading, setLoading] = useState(true);
+  const minElapsed = useMinLoadingElapsed();
   const [formOpen, setFormOpen] = useState(false);
   const [selected, setSelected] = useState<AppointmentWithDetails | null>(null);
   const [defaultStartsAt, setDefaultStartsAt] = useState<Date | null>(null);
@@ -304,8 +307,8 @@ export function AppointmentsCalendar() {
       </FadeIn>
 
       <FadeIn delay={0.08} className="overflow-hidden rounded-3xl border border-border/70 bg-card shadow-sm">
-        {loading ? (
-          <p className="p-6 text-sm text-muted-foreground">Cargando agenda...</p>
+        {loading || !minElapsed ? (
+          <CalendarSkeleton />
         ) : (
           <div className="overflow-x-auto">
             <div

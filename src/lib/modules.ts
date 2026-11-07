@@ -63,6 +63,7 @@ export const MODULE_NAV: Record<string, ModuleKey | null> = {
   "/admin/products/inventory": null,
   "/admin/customers": null,
   "/admin/settings": null,
+  "/admin/audit": null,
   "/admin/appointments": "appointments",
   "/admin/appointments/today": "appointments",
   "/admin/employees": "employees",

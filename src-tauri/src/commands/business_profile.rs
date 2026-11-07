@@ -2,6 +2,7 @@ use serde::Deserialize;
 use tauri::State;
 
 use crate::app_db::AppDb;
+use crate::audit;
 use crate::error::AppResult;
 use crate::models::business_profile::{BusinessProfile, ModulesFlags};
 use crate::models::user::UserPublic;
@@ -66,8 +67,9 @@ pub async fn update_business_profile(
     state: State<'_, AppState>,
     name: String,
 ) -> AppResult<BusinessProfile> {
-    state.require_owner()?;
-    match &state.db {
+    let actor = state.require_owner()?;
+    let tracker = audit::Tracker::start(&state.db, &actor, "business_profile.update", "business_profile", Some("1"), &[]).await;
+    let result = match &state.db {
         AppDb::Sqlite(_) => {
             state
                 .db
@@ -75,7 +77,9 @@ pub async fn update_business_profile(
                 .await
         }
         AppDb::Postgres(pool) => repo::postgres::update_profile(pool, name).await,
-    }
+    }?;
+    tracker.finish("Actualizó negocio").await;
+    Ok(result)
 }
 
 #[tauri::command]
@@ -92,8 +96,9 @@ pub async fn update_enabled_modules(
     state: State<'_, AppState>,
     modules: ModulesFlags,
 ) -> AppResult<ModulesFlags> {
-    state.require_owner()?;
-    match &state.db {
+    let actor = state.require_owner()?;
+    let tracker = audit::Tracker::start(&state.db, &actor, "business_profile.modules_update", "business_profile", Some("1"), &[]).await;
+    let result = match &state.db {
         AppDb::Sqlite(_) => {
             state
                 .db
@@ -101,5 +106,7 @@ pub async fn update_enabled_modules(
                 .await
         }
         AppDb::Postgres(pool) => repo::postgres::update_modules(pool, modules).await,
-    }
+    }?;
+    tracker.finish("Cambió módulos de").await;
+    Ok(result)
 }

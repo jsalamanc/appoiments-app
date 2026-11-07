@@ -12,6 +12,8 @@ const MIGRATION_0005: &str =
 const MIGRATION_0006: &str = include_str!("../migrations/0006_cash_sessions.sql");
 const MIGRATION_0007: &str = include_str!("../migrations/0007_money_as_integers.sql");
 const MIGRATION_0008: &str = include_str!("../migrations/0008_customers_search.sql");
+const MIGRATION_0009: &str = include_str!("../migrations/0009_audit_log.sql");
+const MIGRATION_0010: &str = include_str!("../migrations/0010_soft_delete_catalog.sql");
 
 pub fn migrations() -> Migrations<'static> {
     Migrations::new(vec![
@@ -23,6 +25,8 @@ pub fn migrations() -> Migrations<'static> {
         M::up(MIGRATION_0006),
         M::up(MIGRATION_0007),
         M::up(MIGRATION_0008),
+        M::up(MIGRATION_0009),
+        M::up(MIGRATION_0010),
     ])
 }
 

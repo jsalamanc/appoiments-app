@@ -15,6 +15,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { updateEmployeeAvailability, WEEKDAY_LABELS } from "@/lib/business-hours";
 import type { Employee, EmployeeAvailability, EmployeeAvailabilityInput } from "@/types/database";
+import { ListSkeleton, SkeletonRegion } from "@/components/admin/skeletons";
 
 type DayOverride = EmployeeAvailabilityInput & { hasOverride: boolean };
 
@@ -66,7 +67,9 @@ export function EmployeeAvailabilityDialog({
         </DialogHeader>
 
         {!employee || overrides === null ? (
-          <p className="text-sm text-muted-foreground">Cargando...</p>
+          <SkeletonRegion label="Cargando…">
+            <ListSkeleton rows={4} />
+          </SkeletonRegion>
         ) : (
           <AvailabilityForm
             employeeId={employee.id}

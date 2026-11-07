@@ -9,6 +9,8 @@ import { OwnerGate } from "@/components/admin/owner-gate";
 import { ReportsEmployees } from "@/components/admin/reports-employees";
 import { getReportPeriod } from "@/lib/reports";
 import type { EmployeePerformanceRow, ReportPeriod } from "@/lib/reports";
+import { ReportPageSkeleton } from "@/components/admin/skeletons";
+import { useMinLoadingElapsed } from "@/lib/use-min-loading";
 
 type EmployeePerformanceReport = {
   period: ReportPeriod;
@@ -34,7 +36,8 @@ export default function ReportsEmployeesPage() {
     };
   }, [period, range.from]);
 
-  if (!data) return null;
+  const minElapsed = useMinLoadingElapsed();
+  if (!data || !minElapsed) return <ReportPageSkeleton />;
 
   return (
     <OwnerGate>

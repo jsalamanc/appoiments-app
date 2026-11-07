@@ -6,6 +6,8 @@ import { ModuleGate } from "@/components/admin/module-gate";
 import { OwnerGate } from "@/components/admin/owner-gate";
 import { ReportsCustomerLtv } from "@/components/admin/reports-customer-ltv";
 import { getCustomerLtvReport, type CustomerLtvReport } from "@/lib/analytics";
+import { ReportPageSkeleton } from "@/components/admin/skeletons";
+import { useMinLoadingElapsed } from "@/lib/use-min-loading";
 
 const TOP_N = 20;
 
@@ -22,7 +24,8 @@ export default function ReportsCustomerLtvPage() {
     };
   }, []);
 
-  if (!data) return null;
+  const minElapsed = useMinLoadingElapsed();
+  if (!data || !minElapsed) return <ReportPageSkeleton />;
 
   return (
     <OwnerGate>

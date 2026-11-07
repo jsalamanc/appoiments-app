@@ -21,10 +21,14 @@ import {
   type CashSession,
 } from "@/lib/cash-sessions";
 import { formatCurrency, formatDateTime } from "@/lib/format";
+import { SkeletonRegion } from "@/components/admin/skeletons";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useMinLoadingElapsed } from "@/lib/use-min-loading";
 
 export function CashSessionPanel() {
   const [session, setSession] = useState<CashSession | null>(null);
   const [loading, setLoading] = useState(true);
+  const minElapsed = useMinLoadingElapsed();
   const [openDialogOpen, setOpenDialogOpen] = useState(false);
   const [closeDialogOpen, setCloseDialogOpen] = useState(false);
   const [openingAmount, setOpeningAmount] = useState("0");
@@ -96,7 +100,13 @@ export function CashSessionPanel() {
     }
   };
 
-  if (loading) return null;
+  if (loading || !minElapsed) {
+    return (
+      <SkeletonRegion label="Cargando caja…" className="print-hidden">
+        <Skeleton className="h-[74px] w-full rounded-3xl" />
+      </SkeletonRegion>
+    );
+  }
 
   return (
     <div className="print-hidden space-y-3">

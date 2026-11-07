@@ -1,14 +1,9 @@
-//! Configuración del modo de almacenamiento de datos (local / PostgreSQL externo).
+//! Configuración del modo de almacenamiento de datos (local / Nube).
 //!
 //! `storage.json`, en el directorio de configuración de la app, guarda los datos
 //! de conexión no sensibles (host, puerto, base, usuario, sslmode). La contraseña
 //! nunca se escribe ahí: vive en el almacén de credenciales del sistema operativo
 //! vía el crate `keyring`.
-//!
-//! Este módulo es la base del issue #9 (Fase 0): define el formato de
-//! configuración y el acceso a credenciales. Todavía no está conectado a
-//! `AppState`/`lib.rs` — esa conexión llega en la Fase 1, para no cambiar el
-//! comportamiento del modo local mientras tanto.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -19,7 +14,6 @@ use sqlx::postgres::PgSslMode;
 
 const CONFIG_FILE_NAME: &str = "storage.json";
 const KEYRING_SERVICE: &str = "com.aurastudio.storage";
-const CA_CERT_FILE_NAME: &str = "postgres-ca.pem";
 
 /// Modo de almacenamiento de datos activo para esta instalación.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -28,8 +22,6 @@ pub enum StorageMode {
     /// SQLite embebida (comportamiento actual, sin cambios).
     #[default]
     Local,
-    /// Servidor PostgreSQL externo, auto-hospedado por el usuario.
-    Postgres(PostgresConnectionConfig),
     /// Base de datos gestionada por el backend de negocio (`vendor::`),
     /// provista al conectar un negocio desde la cuenta de Aura Studio.
     Nube(NubeConnectionConfig),
@@ -68,29 +60,15 @@ impl PostgresConnectionConfig {
     /// `PgConnectOptions` en vez de construir una URI a mano para no tener que
     /// lidiar con el percent-encoding de caracteres especiales en usuario,
     /// contraseña o nombre de base.
-    ///
-    /// `ca_cert_path`, si se da, se usa como certificado raíz para validar el
-    /// servidor — necesario para que `sslmode=verify-ca`/`verify-full`
-    /// funcionen contra un servidor con certificado autofirmado o de una CA
-    /// privada (si no se provee, `verify-ca`/`verify-full` solo van a aceptar
-    /// certificados firmados por una CA ya confiada por el sistema operativo).
-    pub fn connect_options(
-        &self,
-        password: &str,
-        ca_cert_path: Option<&Path>,
-    ) -> sqlx::postgres::PgConnectOptions {
+    pub fn connect_options(&self, password: &str) -> sqlx::postgres::PgConnectOptions {
         let ssl_mode = PgSslMode::from_str(&self.sslmode).unwrap_or_default();
-        let mut options = sqlx::postgres::PgConnectOptions::new()
+        sqlx::postgres::PgConnectOptions::new()
             .host(&self.host)
             .port(self.port)
             .username(&self.username)
             .password(password)
             .database(&self.database)
-            .ssl_mode(ssl_mode);
-        if let Some(path) = ca_cert_path {
-            options = options.ssl_root_cert(path);
-        }
-        options
+            .ssl_mode(ssl_mode)
     }
 }
 
@@ -109,38 +87,6 @@ pub struct NubeConnectionConfig {
     pub business_id: String,
     pub business_name: String,
     pub installation_id: String,
-}
-
-/// Ruta donde vive (si existe) el certificado CA que el usuario subió para
-/// validar su servidor PostgreSQL. Su sola existencia es la señal de "hay un
-/// certificado configurado" — no hace falta un flag aparte en `storage.json`,
-/// igual que la contraseña no necesita un flag aparte (vive en el keychain).
-pub fn ca_cert_path(config_dir: &Path) -> PathBuf {
-    config_dir.join(CA_CERT_FILE_NAME)
-}
-
-/// Copia el certificado elegido por el usuario (file picker, ruta absoluta)
-/// al directorio de configuración de la app, reemplazando cualquier
-/// certificado anterior. Mismo patrón que `util::photos::import_photo`: la
-/// app nunca depende de que el archivo original siga existiendo en su
-/// ubicación de origen.
-pub fn save_ca_cert(config_dir: &Path, source_file_path: &Path) -> std::io::Result<PathBuf> {
-    fs::create_dir_all(config_dir)?;
-    let dest = ca_cert_path(config_dir);
-    fs::copy(source_file_path, &dest)?;
-    Ok(dest)
-}
-
-/// Borra el certificado CA guardado, si lo hay. Se usa al cambiar a un modo
-/// o configuración que ya no lo necesita, para no dejar un certificado viejo
-/// activándose en silencio en una reconexión futura.
-pub fn delete_ca_cert(config_dir: &Path) -> std::io::Result<()> {
-    let path = ca_cert_path(config_dir);
-    match fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(e),
-    }
 }
 
 fn config_path(config_dir: &Path) -> PathBuf {
@@ -175,10 +121,6 @@ pub fn get_password(cfg: &PostgresConnectionConfig) -> keyring::Result<String> {
     keyring::Entry::new(KEYRING_SERVICE, &cfg.keyring_account())?.get_password()
 }
 
-pub fn delete_password(cfg: &PostgresConnectionConfig) -> keyring::Result<()> {
-    keyring::Entry::new(KEYRING_SERVICE, &cfg.keyring_account())?.delete_credential()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -187,23 +129,6 @@ mod tests {
     fn load_defaults_to_local_when_missing() {
         let dir = std::env::temp_dir().join(format!("aura-storage-test-{}", uuid::Uuid::new_v4()));
         assert_eq!(load(&dir), StorageMode::Local);
-    }
-
-    #[test]
-    fn save_then_load_roundtrips_postgres_mode() {
-        let dir = std::env::temp_dir().join(format!("aura-storage-test-{}", uuid::Uuid::new_v4()));
-        let mode = StorageMode::Postgres(PostgresConnectionConfig {
-            host: "db.example.com".to_string(),
-            port: 5432,
-            database: "aura".to_string(),
-            username: "aura_owner".to_string(),
-            sslmode: "require".to_string(),
-        });
-
-        save(&dir, &mode).expect("debe poder escribir storage.json");
-        assert_eq!(load(&dir), mode);
-
-        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

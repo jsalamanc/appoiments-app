@@ -1,4 +1,5 @@
 pub mod appointments;
+pub mod audit;
 pub mod auth;
 pub mod bucket;
 pub mod business_hours;

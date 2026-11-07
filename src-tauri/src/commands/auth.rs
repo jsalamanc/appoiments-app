@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
 
 use crate::app_db::AppDb;
+use crate::audit::{self, NewEntry};
 use crate::cognito::{self, CognitoClient, CognitoSessionInfo};
 use crate::error::{AppError, AppResult};
 use crate::models::user::UserPublic;
@@ -22,17 +23,40 @@ pub async fn auth_login(
     password: String,
     remember_me: bool,
 ) -> AppResult<LoginResult> {
-    let (user, session_token) = match &state.db {
+    let attempted_username = username.clone();
+    let login = match &state.db {
         AppDb::Sqlite(_) => {
             state
                 .db
                 .with_sqlite(move |conn| repo::login(conn, username, password, remember_me))
-                .await?
+                .await
         }
-        AppDb::Postgres(pool) => repo::postgres::login(pool, username, password, remember_me).await?,
+        AppDb::Postgres(pool) => repo::postgres::login(pool, username, password, remember_me).await,
+    };
+    let (user, session_token) = match login {
+        Ok(ok) => ok,
+        Err(e) => {
+            audit::record(
+                &state.db,
+                None,
+                NewEntry::event(
+                    "auth.login_failed",
+                    None,
+                    format!("Intento de inicio de sesión fallido para «{}»", attempted_username.trim()),
+                ),
+            )
+            .await;
+            return Err(e);
+        }
     };
 
     *state.current_user.lock().unwrap() = Some(user.clone());
+    audit::record(
+        &state.db,
+        Some(&user),
+        NewEntry::event("auth.login", Some(&user.id), format!("Inició sesión «{}»", user.username)),
+    )
+    .await;
 
     Ok(LoginResult {
         user,
@@ -50,7 +74,8 @@ pub async fn auth_logout(
     state: State<'_, AppState>,
     session_token: Option<String>,
 ) -> AppResult<()> {
-    let current_user_id = state.current_user.lock().unwrap().as_ref().map(|u| u.id.clone());
+    let current_user = state.current_user.lock().unwrap().clone();
+    let current_user_id = current_user.as_ref().map(|u| u.id.clone());
 
     if let (Some(token), Some(user_id)) = (session_token, current_user_id) {
         match &state.db {
@@ -64,6 +89,14 @@ pub async fn auth_logout(
         }
     }
     *state.current_user.lock().unwrap() = None;
+    if let Some(user) = &current_user {
+        audit::record(
+            &state.db,
+            Some(user),
+            NewEntry::event("auth.logout", Some(&user.id), format!("Cerró sesión «{}»", user.username)),
+        )
+        .await;
+    }
     Ok(())
 }
 
@@ -119,7 +152,9 @@ pub async fn auth_change_password(
     }
     let verify_old_password = !is_owner || current.id == input.user_id;
 
-    match &state.db {
+    let target_user_id = input.user_id.clone();
+    let tracker = audit::Tracker::start(&state.db, &current, "user.change_password", "users", Some(&target_user_id), &[]).await;
+    let result = match &state.db {
         AppDb::Sqlite(_) => {
             state
                 .db
@@ -144,7 +179,9 @@ pub async fn auth_change_password(
             )
             .await
         }
-    }
+    }?;
+    tracker.detail(if current.id == target_user_id { "cambio de su propia contraseña" } else { "restablecida por el dueño" }).finish("Cambió contraseña de").await;
+    Ok(result)
 }
 
 #[derive(Debug, Deserialize)]
@@ -185,7 +222,8 @@ pub async fn create_staff_user(
         "staff"
     };
 
-    match &state.db {
+    let tracker = audit::Tracker::start(&state.db, &current, "user.create", "users", None, &[]).await;
+    let result = match &state.db {
         AppDb::Sqlite(_) => {
             state
                 .db
@@ -198,7 +236,9 @@ pub async fn create_staff_user(
             repo::postgres::create_staff(pool, input.name, input.username, input.password, role)
                 .await
         }
-    }
+    }?;
+    tracker.detail(format!("rol {}", result.role)).finish_created("Creó usuario", &result.id).await;
+    Ok(result)
 }
 
 #[tauri::command]
@@ -240,6 +280,7 @@ pub async fn set_user_active(
         ));
     }
 
+    let tracker = audit::Tracker::start(&state.db, &current, "user.set_active", "users", Some(&user_id), &[]).await;
     match &state.db {
         AppDb::Sqlite(_) => {
             state
@@ -248,7 +289,11 @@ pub async fn set_user_active(
                 .await
         }
         AppDb::Postgres(pool) => repo::postgres::set_active(pool, user_id, active).await,
-    }
+    }?;
+    tracker
+        .finish(if active { "Activó usuario" } else { "Desactivó usuario" })
+        .await;
+    Ok(())
 }
 
 #[derive(Debug, Deserialize)]
@@ -293,6 +338,8 @@ pub async fn auth_recover_owner_password(
         ));
     }
 
+    let recovered_username = input.local_username.clone();
+    let recovered_email = input.cognito_email.clone();
     match &state.db {
         AppDb::Sqlite(_) => {
             state
@@ -306,5 +353,20 @@ pub async fn auth_recover_owner_password(
             repo::postgres::reset_owner_password(pool, input.local_username, input.new_password)
                 .await
         }
-    }
+    }?;
+    audit::record(
+        &state.db,
+        None,
+        NewEntry::event(
+            "user.recover_owner_password",
+            None,
+            format!(
+                "Recuperó la contraseña del dueño «{}» con la cuenta de Cognito {}",
+                recovered_username.trim(),
+                recovered_email.trim()
+            ),
+        ),
+    )
+    .await;
+    Ok(())
 }

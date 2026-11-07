@@ -107,9 +107,7 @@ impl BucketClient {
     }
 
     /// Sube, descarga y borra un objeto de prueba pequeño para confirmar que
-    /// las credenciales, el bucket y el endpoint sirven de verdad — mismo
-    /// espíritu que `storage_test_connection` (que hace un `SELECT 1` real
-    /// en vez de solo "parsear" los datos de conexión).
+    /// las credenciales, el bucket y el endpoint sirven de verdad.
     pub async fn test_connection(&self) -> AppResult<()> {
         let payload = b"aura-studio-test".to_vec();
         self.put_object(TEST_OBJECT_KEY, payload.clone()).await?;

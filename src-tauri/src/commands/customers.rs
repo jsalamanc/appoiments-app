@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::app_db::AppDb;
+use crate::audit;
 use crate::error::AppResult;
 use crate::models::customer::Customer;
 use crate::repositories::customers as repo;
@@ -141,11 +142,14 @@ pub async fn create_customer(
     state: State<'_, AppState>,
     input: CustomerInput,
 ) -> AppResult<Customer> {
-    state.require_user()?;
-    match &state.db {
+    let actor = state.require_user()?;
+    let tracker = audit::Tracker::start(&state.db, &actor, "customer.create", "customers", None, &[]).await;
+    let result = match &state.db {
         AppDb::Sqlite(_) => state.db.with_sqlite(move |conn| repo::create(conn, input)).await,
         AppDb::Postgres(pool) => repo::postgres::create(pool, input).await,
-    }
+    }?;
+    tracker.finish_created("Creó cliente", &result.id).await;
+    Ok(result)
 }
 
 #[tauri::command]
@@ -154,8 +158,9 @@ pub async fn update_customer(
     id: String,
     input: CustomerInput,
 ) -> AppResult<Customer> {
-    state.require_user()?;
-    match &state.db {
+    let actor = state.require_user()?;
+    let tracker = audit::Tracker::start(&state.db, &actor, "customer.update", "customers", Some(&id), &[]).await;
+    let result = match &state.db {
         AppDb::Sqlite(_) => {
             state
                 .db
@@ -163,7 +168,9 @@ pub async fn update_customer(
                 .await
         }
         AppDb::Postgres(pool) => repo::postgres::update(pool, id, input).await,
-    }
+    }?;
+    tracker.finish("Actualizó cliente").await;
+    Ok(result)
 }
 
 #[tauri::command]

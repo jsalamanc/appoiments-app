@@ -9,6 +9,8 @@ import { OwnerGate } from "@/components/admin/owner-gate";
 import { ReportsNoShows } from "@/components/admin/reports-no-shows";
 import { getReportPeriod } from "@/lib/reports";
 import type { NoShowCustomerRow, ReportPeriod } from "@/lib/reports";
+import { ReportPageSkeleton } from "@/components/admin/skeletons";
+import { useMinLoadingElapsed } from "@/lib/use-min-loading";
 
 type RecentNoShowRow = {
   id: string;
@@ -44,7 +46,8 @@ export default function ReportsNoShowsPage() {
     };
   }, [period, range.from]);
 
-  if (!data) return null;
+  const minElapsed = useMinLoadingElapsed();
+  if (!data || !minElapsed) return <ReportPageSkeleton />;
 
   return (
     <OwnerGate>

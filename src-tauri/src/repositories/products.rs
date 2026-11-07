@@ -25,12 +25,12 @@ pub fn list(
 
     let items = if status == "all" {
         let mut stmt =
-            conn.prepare("SELECT * FROM products ORDER BY created_at DESC LIMIT ?1 OFFSET ?2")?;
+            conn.prepare("SELECT * FROM products WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT ?1 OFFSET ?2")?;
         let rows = stmt.query_map(params![limit, offset], Product::from_row)?;
         rows.collect::<Result<Vec<_>, _>>()?
     } else {
         let mut stmt = conn.prepare(
-            "SELECT * FROM products WHERE status = ?1 ORDER BY created_at DESC LIMIT ?2 OFFSET ?3",
+            "SELECT * FROM products WHERE status = ?1 AND deleted_at IS NULL ORDER BY created_at DESC LIMIT ?2 OFFSET ?3",
         )?;
         let rows = stmt.query_map(params![status, limit, offset], Product::from_row)?;
         rows.collect::<Result<Vec<_>, _>>()?
@@ -129,11 +129,21 @@ pub fn update(conn: &mut Connection, id: String, input: ProductInput) -> AppResu
     Ok(product)
 }
 
+/// Borrado lógico: el producto queda con `deleted_at` y deja de mostrarse,
+/// pero las ventas e inventario que lo referencian se conservan. Se quita de
+/// los paquetes que lo incluían (igual que antes con el `ON DELETE CASCADE`).
 pub fn delete(conn: &mut Connection, id: String) -> AppResult<()> {
-    let affected = conn.execute("DELETE FROM products WHERE id = ?1", params![id])?;
+    let tx = conn.transaction()?;
+    let now = now_iso();
+    let affected = tx.execute(
+        "UPDATE products SET deleted_at = ?1, updated_at = ?1 WHERE id = ?2 AND deleted_at IS NULL",
+        params![now, id],
+    )?;
     if affected == 0 {
         return Err(AppError::NotFound);
     }
+    tx.execute("DELETE FROM package_items WHERE product_id = ?1", params![id])?;
+    tx.commit()?;
     Ok(())
 }
 
@@ -255,16 +265,16 @@ pub mod postgres {
     /// toma un `rusqlite::Connection`, así que no se reutiliza acá). `table`
     /// es siempre un literal fijo pasado por el código, nunca por el usuario.
     async fn status_counts(pool: &PgPool, table: &str) -> AppResult<CatalogCounts> {
-        let all: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
+        let all: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table} WHERE deleted_at IS NULL"))
             .fetch_one(pool)
             .await?;
         let published: i64 = sqlx::query_scalar(&format!(
-            "SELECT COUNT(*) FROM {table} WHERE status = 'published'"
+            "SELECT COUNT(*) FROM {table} WHERE status = 'published' AND deleted_at IS NULL"
         ))
         .fetch_one(pool)
         .await?;
         let draft: i64 = sqlx::query_scalar(&format!(
-            "SELECT COUNT(*) FROM {table} WHERE status = 'draft'"
+            "SELECT COUNT(*) FROM {table} WHERE status = 'draft' AND deleted_at IS NULL"
         ))
         .fetch_one(pool)
         .await?;
@@ -292,14 +302,14 @@ pub mod postgres {
         let (limit, offset) = get_range(safe_page, page_size);
 
         let rows = if status == "all" {
-            sqlx::query("SELECT * FROM products ORDER BY created_at DESC LIMIT $1 OFFSET $2")
+            sqlx::query("SELECT * FROM products WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT $1 OFFSET $2")
                 .bind(limit)
                 .bind(offset)
                 .fetch_all(pool)
                 .await?
         } else {
             sqlx::query(
-                "SELECT * FROM products WHERE status = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3",
+                "SELECT * FROM products WHERE status = $1 AND deleted_at IS NULL ORDER BY created_at DESC LIMIT $2 OFFSET $3",
             )
             .bind(&status)
             .bind(limit)
@@ -374,13 +384,22 @@ pub mod postgres {
     }
 
     pub async fn delete(pool: &PgPool, id: String) -> AppResult<()> {
-        let result = sqlx::query("DELETE FROM products WHERE id = $1")
-            .bind(id)
-            .execute(pool)
-            .await?;
+        let mut tx = pool.begin().await?;
+        let result = sqlx::query(
+            "UPDATE products SET deleted_at = now(), updated_at = now()
+             WHERE id = $1 AND deleted_at IS NULL",
+        )
+        .bind(&id)
+        .execute(&mut *tx)
+        .await?;
         if result.rows_affected() == 0 {
             return Err(AppError::NotFound);
         }
+        sqlx::query("DELETE FROM package_items WHERE product_id = $1")
+            .bind(&id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
         Ok(())
     }
 

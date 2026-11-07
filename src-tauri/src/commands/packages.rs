@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
 
 use crate::app_db::AppDb;
+use crate::audit;
 use crate::error::{AppError, AppResult};
 use crate::repositories::packages as repo;
 use crate::state::AppState;
@@ -115,8 +116,9 @@ pub async fn create_package(
     state: State<'_, AppState>,
     input: PackageInput,
 ) -> AppResult<PackageWithItems> {
-    state.require_user()?;
-    match &state.db {
+    let actor = state.require_user()?;
+    let tracker = audit::Tracker::start(&state.db, &actor, "package.create", "packages", None, &[("package_items", "package_id")]).await;
+    let result = match &state.db {
         AppDb::Sqlite(_) => {
             state
                 .db
@@ -124,7 +126,9 @@ pub async fn create_package(
                 .await
         }
         AppDb::Postgres(pool) => repo::postgres::create(pool, input).await,
-    }
+    }?;
+    tracker.finish_created("Creó paquete", &result.id).await;
+    Ok(result)
 }
 
 /// Ver `products::update_product`: la foto vieja se borra solo después de
@@ -136,7 +140,8 @@ pub async fn update_package(
     id: String,
     input: PackageInput,
 ) -> AppResult<PackageWithItems> {
-    state.require_user()?;
+    let actor = state.require_user()?;
+    let tracker = audit::Tracker::start(&state.db, &actor, "package.update", "packages", Some(&id), &[("package_items", "package_id")]).await;
     let old_photo_path = match &state.db {
         AppDb::Sqlite(_) => {
             let id = id.clone();
@@ -156,6 +161,7 @@ pub async fn update_package(
         }
         AppDb::Postgres(pool) => repo::postgres::update(pool, id, input).await,
     }?;
+    tracker.finish("Actualizó paquete").await;
 
     if old_photo_path.is_some() && old_photo_path != new_photo_path {
         if let (Ok(data_dir), Ok(config_dir)) =
@@ -168,30 +174,18 @@ pub async fn update_package(
     Ok(updated)
 }
 
-/// Ver `products::delete_product`: la foto se borra de disco/bucket después
-/// de confirmar el `DELETE` (issue #18).
+/// Borrado lógico (ver `repositories::packages::delete`): el registro queda
+/// deshabilitado y deja de mostrarse, pero el historial de ventas, inventario
+/// y citas que lo referencia se conserva. La foto también se conserva.
 #[tauri::command]
-pub async fn delete_package(app: AppHandle, state: State<'_, AppState>, id: String) -> AppResult<()> {
-    state.require_user()?;
-    let old_photo_path = match &state.db {
-        AppDb::Sqlite(_) => {
-            let id = id.clone();
-            state.db.with_sqlite(move |conn| repo::get(conn, id)).await?
-        }
-        AppDb::Postgres(pool) => repo::postgres::get(pool, id.clone()).await?,
-    }
-    .and_then(|p| p.photo_path);
-
+pub async fn delete_package(state: State<'_, AppState>, id: String) -> AppResult<()> {
+    let actor = state.require_user()?;
+    let tracker = audit::Tracker::start(&state.db, &actor, "package.delete", "packages", Some(&id), &[("package_items", "package_id")]).await;
     match &state.db {
         AppDb::Sqlite(_) => state.db.with_sqlite(move |conn| repo::delete(conn, id)).await,
         AppDb::Postgres(pool) => repo::postgres::delete(pool, id).await,
     }?;
-
-    if let (Ok(data_dir), Ok(config_dir)) = (app.path().app_data_dir(), app.path().app_config_dir())
-    {
-        cleanup_old_photo(&data_dir, &config_dir, &state.db, old_photo_path.as_deref()).await;
-    }
-
+    tracker.finish("Deshabilitó paquete").await;
     Ok(())
 }
 

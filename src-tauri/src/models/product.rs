@@ -16,6 +16,7 @@ pub struct Product {
     pub stock: i64,
     pub created_at: String,
     pub updated_at: String,
+    pub deleted_at: Option<String>,
 }
 
 impl Product {
@@ -30,6 +31,7 @@ impl Product {
             stock: row.get("stock")?,
             created_at: row.get("created_at")?,
             updated_at: row.get("updated_at")?,
+            deleted_at: row.get("deleted_at")?,
         })
     }
 
@@ -42,6 +44,7 @@ impl Product {
         use sqlx::Row;
         let created_at: time::OffsetDateTime = row.try_get("created_at")?;
         let updated_at: time::OffsetDateTime = row.try_get("updated_at")?;
+        let deleted_at: Option<time::OffsetDateTime> = row.try_get("deleted_at")?;
         Ok(Self {
             id: row.try_get("id")?,
             name: row.try_get("name")?,
@@ -52,6 +55,7 @@ impl Product {
             stock: row.try_get("stock")?,
             created_at: crate::db::format_pg_timestamp(created_at),
             updated_at: crate::db::format_pg_timestamp(updated_at),
+            deleted_at: deleted_at.map(crate::db::format_pg_timestamp),
         })
     }
 }

@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { ReportPageSkeleton } from "@/components/admin/skeletons";
 import { NetworkStatusHeader } from "@/components/admin/network-status-header";
 import { AdminSidebar } from "@/components/admin/sidebar";
 
@@ -34,7 +35,13 @@ export default function AdminLayout({
     };
   }, [router]);
 
-  if (!ready || !authorized) return null;
+  if (!ready || !authorized) {
+    return (
+      <div className="px-4 py-6 md:px-8 md:py-8">
+        <ReportPageSkeleton />
+      </div>
+    );
+  }
 
   return (
     <div className="admin-shell flex h-dvh flex-col overflow-hidden lg:flex-row">

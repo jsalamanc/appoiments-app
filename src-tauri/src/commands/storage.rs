@@ -1,10 +1,8 @@
-use std::time::Duration;
-
-use sqlx::postgres::PgPoolOptions;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::app_db;
 use crate::app_db::AppDb;
+use crate::audit::{self, NewEntry};
 use crate::bucket_config::{self, BucketConfig};
 use crate::cognito;
 use crate::error::{AppError, AppResult};
@@ -14,8 +12,6 @@ use crate::state::AppState;
 use crate::storage_config::{self, NubeConnectionConfig, PostgresConnectionConfig, StorageMode};
 use crate::util::bucket::BucketClient;
 use crate::vendor::{self, VendorClient, VendorConnectOutcome};
-
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn config_dir(app: &AppHandle) -> AppResult<std::path::PathBuf> {
     app.path()
@@ -53,42 +49,7 @@ pub async fn storage_get_mode(app: AppHandle, state: State<'_, AppState>) -> App
     Ok(storage_config::load(&config_dir(&app)?))
 }
 
-/// Prueba una conexión a PostgreSQL con los datos ingresados en Ajustes, sin
-/// persistir nada (ni `storage.json` ni la contraseña en el keychain) y sin
-/// correr migraciones. Se usa antes de `storage_switch_mode` (Fase 3) para
-/// darle al usuario feedback inmediato de si el servidor es alcanzable y las
-/// credenciales son válidas.
-///
-/// Solo el owner puede cambiar el modo de almacenamiento, igual que el resto
-/// de Ajustes (`update_business_profile`, `update_enabled_modules`): se
-/// revalida aquí y no solo se oculta en la UI.
-#[tauri::command]
-pub async fn storage_test_connection(
-    state: State<'_, AppState>,
-    config: PostgresConnectionConfig,
-    password: String,
-    ca_cert_path: Option<String>,
-) -> AppResult<()> {
-    state.require_owner()?;
-
-    let ca_cert_path = ca_cert_path.map(std::path::PathBuf::from);
-    let pool = PgPoolOptions::new()
-        .max_connections(1)
-        .acquire_timeout(CONNECT_TIMEOUT)
-        .connect_with(config.connect_options(&password, ca_cert_path.as_deref()))
-        .await
-        .map_err(|e| AppError::validation(format!("No se pudo conectar: {e}")))?;
-
-    let result = sqlx::query("SELECT 1")
-        .execute(&pool)
-        .await
-        .map_err(|e| AppError::validation(format!("Conexión establecida pero la prueba falló: {e}")));
-
-    pool.close().await;
-    result.map(|_| ())
-}
-
-/// Cambia el modo de almacenamiento activo. Para `postgres`, se conecta y se
+/// Cambia el modo de almacenamiento activo. Para `nube`, se conecta y se
 /// corren las migraciones de esquema contra el destino, y opcionalmente se
 /// migran los datos locales (issue #11), incluidas las imágenes del catálogo
 /// al bucket configurado (issue #18) — todo ANTES de persistir nada — si algo
@@ -98,19 +59,12 @@ pub async fn storage_test_connection(
 /// del plugin `process`) después de un cambio exitoso: `AppState` ya quedó
 /// construido contra el backend anterior y no se puede reemplazar en
 /// caliente.
-///
-/// El bucket es obligatorio en modo `postgres` (issue #18): las imágenes del
-/// catálogo necesitan un destino remoto para no quedar atadas al disco de
-/// una sola instalación.
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn storage_switch_mode(
     app: AppHandle,
     state: State<'_, AppState>,
     mode: String,
-    config: Option<PostgresConnectionConfig>,
-    password: Option<String>,
-    ca_cert_path: Option<String>,
     migrate_data: Option<bool>,
     replace_data: Option<bool>,
     bucket_config: Option<BucketConfig>,
@@ -119,6 +73,8 @@ pub async fn storage_switch_mode(
     nube_business_name: Option<String>,
 ) -> AppResult<Option<MigrationSummary>> {
     let mode_for_log = mode.clone();
+    let audit_state = state.clone();
+    let audit_actor = state.require_owner().ok();
     // Separado en una función interna solo por esto: `?` dentro de un
     // `match` no "sale" del `match`, sale de toda la función que lo
     // contiene, así que intentar envolver el `match` de abajo con un
@@ -129,9 +85,6 @@ pub async fn storage_switch_mode(
         app,
         state,
         mode,
-        config,
-        password,
-        ca_cert_path,
         migrate_data,
         replace_data,
         bucket_config,
@@ -142,19 +95,28 @@ pub async fn storage_switch_mode(
     .await;
     if let Err(e) = &result {
         eprintln!("[storage] switch_mode({mode_for_log}) failed: {e}");
+    } else {
+        // Se registra en la base que estaba activa hasta ahora: la nueva
+        // solo se adopta al reiniciar la app.
+        audit::record(
+            &audit_state.db,
+            audit_actor.as_ref(),
+            NewEntry::event(
+                "storage.switch_mode",
+                None,
+                format!("Cambió el almacenamiento de datos a «{mode_for_log}»"),
+            ),
+        )
+        .await;
     }
     result
 }
 
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
 async fn storage_switch_mode_inner(
     app: AppHandle,
     state: State<'_, AppState>,
     mode: String,
-    config: Option<PostgresConnectionConfig>,
-    password: Option<String>,
-    ca_cert_path: Option<String>,
     migrate_data: Option<bool>,
     replace_data: Option<bool>,
     bucket_config: Option<BucketConfig>,
@@ -166,8 +128,8 @@ async fn storage_switch_mode_inner(
     let dir = config_dir(&app)?;
 
     // Si esta instalación venía conectada a un negocio de Nube y el cambio la
-    // aleja de ese negocio (a Local, a Postgres propio, o a otro negocio de
-    // Nube), se desvincula del lado del servidor -- best-effort: sin
+    // aleja de ese negocio (a Local, o a otro negocio de Nube), se desvincula
+    // del lado del servidor -- best-effort: sin
     // internet, o si la sesión de la cuenta venció, esto no debe bloquear el
     // cambio de modo (sobre todo volver a Local, que tiene que funcionar
     // siempre, sin depender de nada).
@@ -193,8 +155,8 @@ async fn storage_switch_mode_inner(
 
     match mode.as_str() {
         "local" => {
-            // "Migración de vuelta": espejo de los caminos "postgres"/"nube"
-            // (todo ANTES de persistir nada) -- acá es además la única forma
+            // "Migración de vuelta": espejo del camino "nube" (todo ANTES de
+            // persistir nada) -- acá es además la única forma
             // posible de hacerlo, porque la lectura necesita que `state.db`
             // siga siendo el `AppDb::Postgres` actual (se pierde en cuanto se
             // guarda `storage.json` en modo local, ya que el próximo
@@ -232,97 +194,6 @@ async fn storage_switch_mode_inner(
 
             storage_config::save(&dir, &StorageMode::Local)
                 .map_err(|e| AppError::Internal(format!("no se pudo guardar la configuración: {e}")))?;
-            // Sin certificado CA en modo local: evita que una reconfiguración
-            // futura a Postgres herede en silencio un certificado viejo.
-            storage_config::delete_ca_cert(&dir)
-                .map_err(|e| AppError::Internal(format!("no se pudo limpiar el certificado CA: {e}")))?;
-            Ok(migration_summary)
-        }
-        "postgres" => {
-            let config = config.ok_or_else(|| AppError::validation("Faltan los datos de conexión"))?;
-            let password = password.ok_or_else(|| AppError::validation("Falta la contraseña"))?;
-            // El bucket es obligatorio en este modo (issue #18): las subidas
-            // de fotos del catálogo lo necesitan desde el primer momento, no
-            // solo si se migran datos existentes.
-            let bucket_config = bucket_config
-                .ok_or_else(|| AppError::validation("Falta configurar un bucket en la nube para las imágenes"))?;
-            let bucket_secret = bucket_secret
-                .ok_or_else(|| AppError::validation("Falta la credencial (Secret Access Key) del bucket"))?;
-
-            // Se prueba el bucket ANTES de tocar Postgres: si no sirve, se
-            // falla rápido sin haber abierto ninguna conexión todavía.
-            let bucket_client = BucketClient::new(&bucket_config, &bucket_secret)?;
-            bucket_client
-                .test_connection()
-                .await
-                .map_err(|e| AppError::validation(format!("No se pudo validar el bucket: {e}")))?;
-
-            // El certificado se copia a la carpeta de configuración ANTES de
-            // probar la conexión, para validar contra la copia que de verdad
-            // va a usar la app en cada arranque (no el archivo original, que
-            // podría moverse o borrarse después).
-            let saved_ca_cert = match &ca_cert_path {
-                Some(source) => Some(
-                    storage_config::save_ca_cert(&dir, std::path::Path::new(source)).map_err(|e| {
-                        AppError::validation(format!("No se pudo leer el certificado CA: {e}"))
-                    })?,
-                ),
-                None => {
-                    storage_config::delete_ca_cert(&dir).map_err(|e| {
-                        AppError::Internal(format!("no se pudo limpiar el certificado CA: {e}"))
-                    })?;
-                    None
-                }
-            };
-
-            let pg_pool = app_db::open_postgres(&config, &password, saved_ca_cert.as_deref())
-                .await
-                .map_err(|e| AppError::validation(format!("No se pudo preparar la base de datos: {e}")))?;
-
-            // Guard de seguridad del lado del servidor, independiente de lo
-            // que mande la UI: la migración automática solo tiene sentido
-            // (y solo se ofreció) yendo de Local hacia Postgres.
-            let should_migrate = migrate_data.unwrap_or(false) && matches!(&state.db, AppDb::Sqlite(_));
-            let migration_summary = if should_migrate {
-                let data_dir = data_dir(&app)?;
-                let mut on_progress = progress_emitter(&app);
-                let summary = migration::migrate_local_to_postgres(
-                    &mut on_progress,
-                    &state.db,
-                    &pg_pool,
-                    &data_dir,
-                    Some((&bucket_config, &bucket_client)),
-                    replace_data.unwrap_or(false),
-                )
-                .await
-                        .map_err(|e| AppError::validation(format!("No se pudo migrar los datos locales: {e}")))?;
-                // Postgres ya tiene la copia: vaciar la base local evita que
-                // quede una copia vieja dando vueltas (ver doc de
-                // `clear_local_data`) y, sobre todo, que bloquee una futura
-                // "migración de vuelta" por no estar vacía.
-                state
-                    .db
-                    .with_sqlite(|conn| migration::clear_local_data(conn))
-                    .await
-                    .map_err(|e| {
-                        AppError::Internal(format!(
-                            "los datos se migraron bien, pero no se pudo vaciar la base local: {e}"
-                        ))
-                    })?;
-                Some(summary)
-            } else {
-                None
-            };
-
-            storage_config::set_password(&config, &password)
-                .map_err(|e| AppError::Internal(format!("no se pudo guardar la contraseña: {e}")))?;
-            storage_config::save(&dir, &StorageMode::Postgres(config))
-                .map_err(|e| AppError::Internal(format!("no se pudo guardar la configuración: {e}")))?;
-            bucket_config::set_bucket_secret(&bucket_config, &bucket_secret)
-                .map_err(|e| AppError::Internal(format!("no se pudo guardar la credencial del bucket: {e}")))?;
-            bucket_config::save_bucket(&dir, &bucket_config)
-                .map_err(|e| AppError::Internal(format!("no se pudo guardar la configuración del bucket: {e}")))?;
-
             Ok(migration_summary)
         }
         "nube" => {
@@ -330,10 +201,8 @@ async fn storage_switch_mode_inner(
                 nube_business_id.ok_or_else(|| AppError::validation("Falta el negocio a conectar"))?;
             let business_name = nube_business_name
                 .ok_or_else(|| AppError::validation("Falta el nombre del negocio"))?;
-            // A diferencia de "postgres" (donde el usuario administra toda su
-            // infraestructura y se le exige el bucket desde el primer
-            // momento), en Nube el bucket es opcional: el negocio se puede
-            // conectar sin uno, simplemente no se podrán subir fotos del
+            // En Nube el bucket es opcional: el negocio se puede conectar sin
+            // uno, simplemente no se podrán subir fotos del
             // catálogo hasta que se configure (ver
             // `usePhotoUploadAvailability` en el frontend y
             // `util::photos::upload_to_bucket`, que ya maneja la ausencia de
@@ -385,9 +254,7 @@ async fn storage_switch_mode_inner(
                 sslmode: connection.ssl_mode,
             };
 
-            // Sin certificado CA: mismo razonamiento que en `lib.rs::setup`,
-            // el backend gestionado usa una CA pública estándar.
-            let pg_pool = app_db::open_postgres(&pg_config, &connection.password, None)
+            let pg_pool = app_db::open_postgres(&pg_config, &connection.password)
                 .await
                 .map_err(|e| AppError::validation(format!("No se pudo preparar la base de datos: {e}")))?;
 
@@ -405,9 +272,10 @@ async fn storage_switch_mode_inner(
                 )
                 .await
                 .map_err(|e| AppError::validation(format!("No se pudo migrar los datos locales: {e}")))?;
-                // Ver el comentario equivalente en la rama "postgres" de
-                // arriba: vaciar la base local evita que quede una copia
-                // vieja y que bloquee una futura "migración de vuelta".
+                // Nube ya tiene la copia: vaciar la base local evita que
+                // quede una copia vieja dando vueltas (ver doc de
+                // `clear_local_data`) y, sobre todo, que bloquee una futura
+                // "migración de vuelta" por no estar vacía.
                 state
                     .db
                     .with_sqlite(|conn| migration::clear_local_data(conn))
@@ -424,8 +292,6 @@ async fn storage_switch_mode_inner(
 
             storage_config::set_password(&pg_config, &connection.password)
                 .map_err(|e| AppError::Internal(format!("no se pudo guardar la contraseña: {e}")))?;
-            storage_config::delete_ca_cert(&dir)
-                .map_err(|e| AppError::Internal(format!("no se pudo limpiar el certificado CA: {e}")))?;
             storage_config::save(
                 &dir,
                 &StorageMode::Nube(NubeConnectionConfig {
@@ -452,19 +318,26 @@ async fn storage_switch_mode_inner(
 }
 
 /// Descarga un respaldo JSON de los datos locales (issue #9, Fase 4). Solo
-/// disponible en modo Local — el modo Postgres es responsabilidad del propio
-/// servidor del usuario. No incluye `sessions` ni `password_hash` (ver
+/// disponible en modo Local — el modo Nube usa la base gestionada por el
+/// backend de negocio. No incluye `sessions` ni `password_hash` (ver
 /// `crate::export`). `path` es elegido por el usuario en un diálogo nativo
 /// de "Guardar como" en el frontend, no una ruta arbitraria del backend.
 #[tauri::command]
 pub async fn storage_export_local_data(state: State<'_, AppState>, path: String) -> AppResult<()> {
-    state.require_owner()?;
+    let actor = state.require_owner()?;
 
     match &state.db {
         AppDb::Sqlite(_) => {
             let json = state.db.with_sqlite(export::export_all).await?;
             std::fs::write(&path, json)
-                .map_err(|e| AppError::Internal(format!("no se pudo escribir el archivo: {e}")))
+                .map_err(|e| AppError::Internal(format!("no se pudo escribir el archivo: {e}")))?;
+            audit::record(
+                &state.db,
+                Some(&actor),
+                NewEntry::event("data.export", None, "Exportó un respaldo completo de los datos"),
+            )
+            .await;
+            Ok(())
         }
         AppDb::Postgres(_) => Err(AppError::validation(
             "El respaldo a JSON solo está disponible en modo local",

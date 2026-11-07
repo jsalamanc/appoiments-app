@@ -24,6 +24,8 @@ import { Button } from "@/components/ui/button";
 import { type CenterModules, type ModuleKey, DEFAULT_MODULES } from "@/lib/modules";
 import { getPeriodRange } from "@/lib/sales";
 import { cn } from "@/lib/utils";
+import { DashboardSkeleton, RevenueMetricsSkeleton } from "@/components/admin/skeletons";
+import { useMinLoadingElapsed } from "@/lib/use-min-loading";
 
 type StatCard = {
   label: string;
@@ -82,6 +84,9 @@ export default function AdminDashboardPage() {
     appointments: 0,
   });
   const [revenue, setRevenue] = useState<RevenueMetricsData | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const minElapsed = useMinLoadingElapsed();
+  const [revenueLoading, setRevenueLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
@@ -122,6 +127,7 @@ export default function AdminDashboardPage() {
         employees: employees.length,
         appointments: appointments.filter((a) => a.status === "scheduled").length,
       });
+      setLoaded(true);
 
       // Solo el dueño puede ver los ingresos (get_revenue_metrics exige
       // require_owner en el backend) — el staff ve el resto del panel
@@ -135,8 +141,16 @@ export default function AdminDashboardPage() {
         if (!cancelled) setRevenue(revenueMetrics);
       } catch {
         // Staff: sin permiso para ver ingresos, se omite la tarjeta.
+      } finally {
+        if (!cancelled) setRevenueLoading(false);
       }
-    })();
+    })().catch(() => {
+      // Si algo falla al cargar, no dejar el skeleton para siempre.
+      if (!cancelled) {
+        setLoaded(true);
+        setRevenueLoading(false);
+      }
+    });
 
     return () => {
       cancelled = true;
@@ -144,6 +158,8 @@ export default function AdminDashboardPage() {
   }, []);
 
   const usable = (key: ModuleKey) => modules[key];
+
+  if (!loaded || !minElapsed) return <DashboardSkeleton />;
 
   const stats: StatCard[] = [
     {
@@ -198,6 +214,8 @@ export default function AdminDashboardPage() {
           Administra tu catálogo, registra ventas y revisa tus ingresos.
         </p>
       </FadeIn>
+
+      {revenueLoading && <RevenueMetricsSkeleton />}
 
       {revenue && (
         <RevenueMetrics

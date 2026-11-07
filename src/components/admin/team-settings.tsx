@@ -11,6 +11,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { formatMemberRole } from "@/lib/roles";
+import { ListSkeleton, SkeletonRegion } from "@/components/admin/skeletons";
+import { useMinLoadingElapsed } from "@/lib/use-min-loading";
 
 type UserPublic = {
   id: string;
@@ -23,6 +25,7 @@ type UserPublic = {
 export function TeamSettings() {
   const [users, setUsers] = useState<UserPublic[]>([]);
   const [loading, setLoading] = useState(true);
+  const minElapsed = useMinLoadingElapsed();
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
   const [username, setUsername] = useState("");
@@ -129,8 +132,10 @@ export function TeamSettings() {
           </Button>
         </form>
 
-        {loading ? (
-          <p className="mt-4 text-sm text-muted-foreground">Cargando equipo...</p>
+        {loading || !minElapsed ? (
+          <SkeletonRegion label="Cargando equipo…" className="mt-6">
+            <ListSkeleton rows={3} />
+          </SkeletonRegion>
         ) : (
           <div className="mt-6 space-y-3">
             <h3 className="text-sm font-medium text-muted-foreground">

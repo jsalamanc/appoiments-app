@@ -9,6 +9,8 @@ import { OwnerGate } from "@/components/admin/owner-gate";
 import { ReportsServices } from "@/components/admin/reports-services";
 import { getReportPeriod } from "@/lib/reports";
 import type { ReportPeriod, TopServiceRow } from "@/lib/reports";
+import { ReportPageSkeleton } from "@/components/admin/skeletons";
+import { useMinLoadingElapsed } from "@/lib/use-min-loading";
 
 type TopServicesReport = {
   period: ReportPeriod;
@@ -37,7 +39,8 @@ export default function ReportsServicesPage() {
     };
   }, [period, range.from]);
 
-  if (!data) return null;
+  const minElapsed = useMinLoadingElapsed();
+  if (!data || !minElapsed) return <ReportPageSkeleton />;
 
   return (
     <OwnerGate>

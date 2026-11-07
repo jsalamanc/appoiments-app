@@ -6,6 +6,7 @@ use serde::Deserialize;
 use tauri::State;
 
 use crate::app_db::AppDb;
+use crate::audit;
 use crate::error::AppResult;
 use crate::models::commission::EmployeeCommissionRate;
 use crate::repositories::commissions as repo;
@@ -49,8 +50,10 @@ pub async fn update_employee_commission_rates(
     employee_id: String,
     rates: Vec<CommissionRateInput>,
 ) -> AppResult<Vec<EmployeeCommissionRate>> {
-    state.require_owner()?;
-    match &state.db {
+    let actor = state.require_owner()?;
+    let tracker = audit::Tracker::start_by(&state.db, &actor, "employee.commission_update", "employee_commission_rates", "employee_id", Some(&employee_id), &[]).await;
+    let tracked_employee = audit::name_of(&state.db, "employees", &employee_id).await;
+    let result = match &state.db {
         AppDb::Sqlite(_) => {
             state
                 .db
@@ -62,5 +65,7 @@ pub async fn update_employee_commission_rates(
         AppDb::Postgres(pool) => {
             repo::postgres::update_employee_commission_rates(pool, employee_id, rates).await
         }
-    }
+    }?;
+    tracker.detail(tracked_employee).finish("Actualizó comisiones").await;
+    Ok(result)
 }

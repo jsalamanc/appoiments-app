@@ -8,6 +8,8 @@ import { OwnerGate } from "@/components/admin/owner-gate";
 import { ReportsCommissions } from "@/components/admin/reports-commissions";
 import { getEmployeeCommissionsReport, type EmployeeCommissionsReport } from "@/lib/commissions";
 import { getReportPeriod } from "@/lib/reports";
+import { ReportPageSkeleton } from "@/components/admin/skeletons";
+import { useMinLoadingElapsed } from "@/lib/use-min-loading";
 
 export default function ReportsCommissionsPage() {
   const searchParams = useSearchParams();
@@ -25,7 +27,8 @@ export default function ReportsCommissionsPage() {
     };
   }, [period, range.from]);
 
-  if (!data) return null;
+  const minElapsed = useMinLoadingElapsed();
+  if (!data || !minElapsed) return <ReportPageSkeleton />;
 
   return (
     <OwnerGate>

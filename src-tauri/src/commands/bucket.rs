@@ -27,8 +27,7 @@ pub async fn bucket_get_config(app: AppHandle, state: State<'_, AppState>) -> Ap
 }
 
 /// Prueba un bucket con los datos ingresados en Ajustes (sube, descarga y
-/// borra un objeto pequeño), sin persistir nada — mismo espíritu que
-/// `storage_test_connection`.
+/// borra un objeto pequeño), sin persistir nada.
 #[tauri::command]
 pub async fn bucket_test_connection(
     state: State<'_, AppState>,
@@ -43,9 +42,9 @@ pub async fn bucket_test_connection(
 /// la resuelva con `convertFileSrc` (ver `src/lib/photo-path.ts`).
 ///
 /// En modo Local, el archivo ya está ahí por construcción (no-op). En modo
-/// "Base de datos propia", el disco local es solo una caché: si falta (ej.
-/// una segunda instalación apuntando al mismo Postgres/bucket compartido), se
-/// descarga del bucket a esa misma ruta relativa antes de devolverla.
+/// "Nube", el disco local es solo una caché: si falta (ej. una segunda
+/// instalación apuntando al mismo negocio/bucket compartido), se descarga del
+/// bucket a esa misma ruta relativa antes de devolverla.
 #[tauri::command]
 pub async fn resolve_photo_cache(
     app: AppHandle,

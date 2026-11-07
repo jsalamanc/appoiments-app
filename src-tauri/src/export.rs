@@ -28,7 +28,7 @@ fn value_ref_to_json(value: ValueRef) -> Value {
     }
 }
 
-fn row_to_json(row: &Row, columns: &[String]) -> rusqlite::Result<Map<String, Value>> {
+pub(crate) fn row_to_json(row: &Row, columns: &[String]) -> rusqlite::Result<Map<String, Value>> {
     let mut map = Map::with_capacity(columns.len());
     for (i, name) in columns.iter().enumerate() {
         map.insert(name.clone(), value_ref_to_json(row.get_ref(i)?));
@@ -99,6 +99,7 @@ pub fn export_all(conn: &mut Connection) -> AppResult<String> {
         "inventoryMovements".into(),
         Value::Array(export_table(conn, "inventory_movements")?),
     );
+    root.insert("auditLog".into(), Value::Array(export_table(conn, "audit_log")?));
 
     serde_json::to_string_pretty(&Value::Object(root))
         .map_err(|e| crate::error::AppError::Internal(format!("no se pudo generar el respaldo: {e}")))

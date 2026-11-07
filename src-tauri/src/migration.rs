@@ -342,8 +342,8 @@ pub async fn write_snapshot_to_postgres(
     for p in &snapshot.products {
         sqlx::query(
             "INSERT INTO products
-                (id, name, price, cost, photo_path, status, stock, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+                (id, name, price, cost, photo_path, status, stock, created_at, updated_at, deleted_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
         )
         .bind(&p.id)
         .bind(&p.name)
@@ -354,6 +354,7 @@ pub async fn write_snapshot_to_postgres(
         .bind(p.stock)
         .bind(parse_ts(&p.created_at)?)
         .bind(parse_ts(&p.updated_at)?)
+        .bind(parse_ts_opt(&p.deleted_at)?)
         .execute(&mut *tx)
         .await?;
         tick(&mut done);
@@ -363,8 +364,8 @@ pub async fn write_snapshot_to_postgres(
         sqlx::query(
             "INSERT INTO services
                 (id, name, description, price, duration_minutes, photo_path, status,
-                 created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+                 created_at, updated_at, deleted_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
         )
         .bind(&s.id)
         .bind(&s.name)
@@ -375,6 +376,7 @@ pub async fn write_snapshot_to_postgres(
         .bind(&s.status)
         .bind(parse_ts(&s.created_at)?)
         .bind(parse_ts(&s.updated_at)?)
+        .bind(parse_ts_opt(&s.deleted_at)?)
         .execute(&mut *tx)
         .await?;
         tick(&mut done);
@@ -383,8 +385,8 @@ pub async fn write_snapshot_to_postgres(
     for pk in &snapshot.packages {
         sqlx::query(
             "INSERT INTO packages
-                (id, name, description, price, photo_path, status, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+                (id, name, description, price, photo_path, status, created_at, updated_at, deleted_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
         )
         .bind(&pk.id)
         .bind(&pk.name)
@@ -394,6 +396,7 @@ pub async fn write_snapshot_to_postgres(
         .bind(&pk.status)
         .bind(parse_ts(&pk.created_at)?)
         .bind(parse_ts(&pk.updated_at)?)
+        .bind(parse_ts_opt(&pk.deleted_at)?)
         .execute(&mut *tx)
         .await?;
         tick(&mut done);
@@ -906,10 +909,11 @@ fn write_snapshot_to_local(
     for p in &snapshot.products {
         tx.execute(
             "INSERT INTO products
-                (id, name, price, cost, photo_path, status, stock, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                (id, name, price, cost, photo_path, status, stock, created_at, updated_at, deleted_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             rusqlite::params![
-                p.id, p.name, p.price, p.cost, p.photo_path, p.status, p.stock, p.created_at, p.updated_at
+                p.id, p.name, p.price, p.cost, p.photo_path, p.status, p.stock, p.created_at, p.updated_at,
+                p.deleted_at
             ],
         )?;
         tick(&mut done);
@@ -919,8 +923,8 @@ fn write_snapshot_to_local(
         tx.execute(
             "INSERT INTO services
                 (id, name, description, price, duration_minutes, photo_path, status,
-                 created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                 created_at, updated_at, deleted_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             rusqlite::params![
                 s.id,
                 s.name,
@@ -931,6 +935,7 @@ fn write_snapshot_to_local(
                 s.status,
                 s.created_at,
                 s.updated_at,
+                s.deleted_at,
             ],
         )?;
         tick(&mut done);
@@ -938,10 +943,12 @@ fn write_snapshot_to_local(
 
     for pk in &snapshot.packages {
         tx.execute(
-            "INSERT INTO packages (id, name, description, price, photo_path, status, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT INTO packages
+                (id, name, description, price, photo_path, status, created_at, updated_at, deleted_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             rusqlite::params![
-                pk.id, pk.name, pk.description, pk.price, pk.photo_path, pk.status, pk.created_at, pk.updated_at
+                pk.id, pk.name, pk.description, pk.price, pk.photo_path, pk.status, pk.created_at, pk.updated_at,
+                pk.deleted_at
             ],
         )?;
         tick(&mut done);

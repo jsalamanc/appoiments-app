@@ -46,10 +46,10 @@ pub async fn vendor_create_business(
 }
 
 /// Vista previa: pide las credenciales de conexión de un negocio sin
-/// persistir nada acá (igual que `storage_test_connection` para Postgres) —
-/// `storage_switch_mode` es quien de verdad conecta y guarda. Esta llamada sí
-/// tiene un efecto del lado del servidor (vincula esta instalación al
-/// negocio, o confirma que ya lo estaba), aunque ninguno local.
+/// persistir nada acá — `storage_switch_mode` es quien de verdad conecta y
+/// guarda. Esta llamada sí tiene un efecto del lado del servidor (vincula
+/// esta instalación al negocio, o confirma que ya lo estaba), aunque ninguno
+/// local.
 #[tauri::command]
 pub async fn vendor_connect_business(
     app: AppHandle,

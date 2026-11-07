@@ -16,14 +16,14 @@ pub struct CatalogCounts {
 /// `table` es siempre un literal fijo pasado por el código (nunca viene del
 /// usuario), así que interpolarlo en el SQL es seguro.
 pub fn status_counts(conn: &Connection, table: &str) -> AppResult<CatalogCounts> {
-    let all: i64 = conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))?;
+    let all: i64 = conn.query_row(&format!("SELECT COUNT(*) FROM {table} WHERE deleted_at IS NULL"), [], |r| r.get(0))?;
     let published: i64 = conn.query_row(
-        &format!("SELECT COUNT(*) FROM {table} WHERE status = 'published'"),
+        &format!("SELECT COUNT(*) FROM {table} WHERE status = 'published' AND deleted_at IS NULL"),
         [],
         |r| r.get(0),
     )?;
     let draft: i64 = conn.query_row(
-        &format!("SELECT COUNT(*) FROM {table} WHERE status = 'draft'"),
+        &format!("SELECT COUNT(*) FROM {table} WHERE status = 'draft' AND deleted_at IS NULL"),
         [],
         |r| r.get(0),
     )?;

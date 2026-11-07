@@ -91,12 +91,12 @@ pub fn list(
 
     let packages: Vec<Package> = if status == "all" {
         let mut stmt = conn
-            .prepare("SELECT * FROM packages ORDER BY created_at DESC LIMIT ?1 OFFSET ?2")?;
+            .prepare("SELECT * FROM packages WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT ?1 OFFSET ?2")?;
         let rows = stmt.query_map(params![limit, offset], Package::from_row)?;
         rows.collect::<Result<Vec<_>, _>>()?
     } else {
         let mut stmt = conn.prepare(
-            "SELECT * FROM packages WHERE status = ?1 ORDER BY created_at DESC LIMIT ?2 OFFSET ?3",
+            "SELECT * FROM packages WHERE status = ?1 AND deleted_at IS NULL ORDER BY created_at DESC LIMIT ?2 OFFSET ?3",
         )?;
         let rows = stmt.query_map(params![status, limit, offset], Package::from_row)?;
         rows.collect::<Result<Vec<_>, _>>()?
@@ -271,7 +271,10 @@ pub fn update(conn: &mut Connection, id: String, input: PackageInput) -> AppResu
 }
 
 pub fn delete(conn: &mut Connection, id: String) -> AppResult<()> {
-    let affected = conn.execute("DELETE FROM packages WHERE id = ?1", params![id])?;
+    let affected = conn.execute(
+        "UPDATE packages SET deleted_at = ?1, updated_at = ?1 WHERE id = ?2 AND deleted_at IS NULL",
+        params![now_iso(), id],
+    )?;
     if affected == 0 {
         return Err(AppError::NotFound);
     }
@@ -327,16 +330,16 @@ pub mod postgres {
     /// `&rusqlite::Connection`); se reutilizan `normalize_status`/`pick_count`
     /// de ese mismo módulo porque son funciones puras.
     async fn status_counts(pool: &PgPool, table: &str) -> AppResult<CatalogCounts> {
-        let all: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
+        let all: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table} WHERE deleted_at IS NULL"))
             .fetch_one(pool)
             .await?;
         let published: i64 = sqlx::query_scalar(&format!(
-            "SELECT COUNT(*) FROM {table} WHERE status = 'published'"
+            "SELECT COUNT(*) FROM {table} WHERE status = 'published' AND deleted_at IS NULL"
         ))
         .fetch_one(pool)
         .await?;
         let draft: i64 = sqlx::query_scalar(&format!(
-            "SELECT COUNT(*) FROM {table} WHERE status = 'draft'"
+            "SELECT COUNT(*) FROM {table} WHERE status = 'draft' AND deleted_at IS NULL"
         ))
         .fetch_one(pool)
         .await?;
@@ -450,14 +453,14 @@ pub mod postgres {
         let (limit, offset) = get_range(safe_page, page_size);
 
         let package_rows = if status == "all" {
-            sqlx::query("SELECT * FROM packages ORDER BY created_at DESC LIMIT $1 OFFSET $2")
+            sqlx::query("SELECT * FROM packages WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT $1 OFFSET $2")
                 .bind(limit)
                 .bind(offset)
                 .fetch_all(pool)
                 .await?
         } else {
             sqlx::query(
-                "SELECT * FROM packages WHERE status = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3",
+                "SELECT * FROM packages WHERE status = $1 AND deleted_at IS NULL ORDER BY created_at DESC LIMIT $2 OFFSET $3",
             )
             .bind(&status)
             .bind(limit)
@@ -568,7 +571,10 @@ pub mod postgres {
     }
 
     pub async fn delete(pool: &PgPool, id: String) -> AppResult<()> {
-        let result = sqlx::query("DELETE FROM packages WHERE id = $1")
+        let result = sqlx::query(
+            "UPDATE packages SET deleted_at = now(), updated_at = now()
+             WHERE id = $1 AND deleted_at IS NULL",
+        )
             .bind(id)
             .execute(pool)
             .await?;

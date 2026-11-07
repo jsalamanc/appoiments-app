@@ -69,7 +69,7 @@ fn load_published_service(
 ) -> AppResult<ServiceInfo> {
     let info = conn
         .query_row(
-            "SELECT duration_minutes, name FROM services WHERE id = ?1 AND status = 'published'",
+            "SELECT duration_minutes, name FROM services WHERE id = ?1 AND status = 'published' AND deleted_at IS NULL",
             params![service_id],
             |row| {
                 Ok(ServiceInfo {
@@ -382,7 +382,7 @@ pub fn complete_with_sale(
 pub fn list_published_services(conn: &mut Connection) -> AppResult<Vec<ServiceRef>> {
     let mut stmt = conn.prepare(
         "SELECT id, name, price, duration_minutes, status FROM services
-         WHERE status = 'published' ORDER BY name ASC",
+         WHERE status = 'published' AND deleted_at IS NULL ORDER BY name ASC",
     )?;
     let rows = stmt.query_map([], |row| {
         Ok(ServiceRef {
@@ -532,7 +532,7 @@ pub mod postgres {
         E: PgExecutor<'e>,
     {
         let row =
-            sqlx::query("SELECT duration_minutes, name FROM services WHERE id = $1 AND status = 'published'")
+            sqlx::query("SELECT duration_minutes, name FROM services WHERE id = $1 AND status = 'published' AND deleted_at IS NULL")
                 .bind(service_id)
                 .fetch_optional(executor)
                 .await?
@@ -808,7 +808,7 @@ pub mod postgres {
     pub async fn list_published_services(pool: &PgPool) -> AppResult<Vec<ServiceRef>> {
         let rows = sqlx::query(
             "SELECT id, name, price, duration_minutes, status FROM services
-             WHERE status = 'published' ORDER BY name ASC",
+             WHERE status = 'published' AND deleted_at IS NULL ORDER BY name ASC",
         )
         .fetch_all(pool)
         .await?;

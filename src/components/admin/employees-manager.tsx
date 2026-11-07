@@ -21,10 +21,13 @@ import { getEmployeeCommissionRates } from "@/lib/commissions";
 import type { EmployeeCommissionRate } from "@/lib/commissions";
 import { deleteEmployee, listEmployees } from "@/lib/employees";
 import type { Employee, EmployeeAvailability } from "@/types/database";
+import { ContentSkeleton, SkeletonRegion } from "@/components/admin/skeletons";
+import { useMinLoadingElapsed } from "@/lib/use-min-loading";
 
 export function EmployeesManager() {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
+  const minElapsed = useMinLoadingElapsed();
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<Employee | null>(null);
   const [toDelete, setToDelete] = useState<Employee | null>(null);
@@ -134,8 +137,10 @@ export function EmployeesManager() {
         </Button>
       </FadeIn>
 
-      {loading ? (
-        <p className="text-sm text-muted-foreground">Cargando empleados...</p>
+      {loading || !minElapsed ? (
+        <SkeletonRegion label="Cargando empleados…">
+          <ContentSkeleton />
+        </SkeletonRegion>
       ) : employees.length === 0 ? (
         <EmptyState
           title="Aún no hay empleados"

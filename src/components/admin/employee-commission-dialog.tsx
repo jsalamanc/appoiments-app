@@ -22,6 +22,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { Employee } from "@/types/database";
+import { ListSkeleton, SkeletonRegion } from "@/components/admin/skeletons";
 
 type OverrideRow = {
   serviceId: string;
@@ -75,7 +76,9 @@ export function EmployeeCommissionDialog({
         </DialogHeader>
 
         {!employee || rates === null ? (
-          <p className="text-sm text-muted-foreground">Cargando...</p>
+          <SkeletonRegion label="Cargando…">
+            <ListSkeleton rows={4} />
+          </SkeletonRegion>
         ) : (
           <CommissionForm
             employeeId={employee.id}

@@ -18,6 +18,7 @@ import {
   Package,
   PackageOpen,
   Receipt,
+  ScrollText,
   Settings,
   ShoppingBag,
   Sparkles,
@@ -199,6 +200,19 @@ const navGroups: NavGroup[] = [
         icon: Award,
         exact: true,
         module: "reports",
+        ownerOnly: true,
+      },
+    ],
+  },
+  {
+    id: "seguridad",
+    label: "Seguridad",
+    items: [
+      {
+        href: "/admin/audit",
+        label: "Auditoría",
+        icon: ScrollText,
+        exact: true,
         ownerOnly: true,
       },
     ],

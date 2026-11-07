@@ -6,6 +6,8 @@ import { useEffect, useState } from "react";
 
 import { SalesHistory } from "@/components/admin/sales-history";
 import type { Sale, SaleWithDetails } from "@/types/database";
+import { TablePageSkeleton } from "@/components/admin/skeletons";
+import { useMinLoadingElapsed } from "@/lib/use-min-loading";
 
 type PaymentFilter = Sale["payment_method"] | "all";
 
@@ -46,7 +48,8 @@ export default function SalesHistoryPage() {
     };
   }, [page, payment, reloadKey]);
 
-  if (!result) return null;
+  const minElapsed = useMinLoadingElapsed();
+  if (!result || !minElapsed) return <TablePageSkeleton />;
 
   return (
     <SalesHistory

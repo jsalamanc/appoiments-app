@@ -10,6 +10,8 @@ import type {
   Customer,
   SaleWithDetails,
 } from "@/types/database";
+import { DetailPageSkeleton } from "@/components/admin/skeletons";
+import { useMinLoadingElapsed } from "@/lib/use-min-loading";
 
 type Detail = {
   customer: Customer;
@@ -57,7 +59,9 @@ export default function CustomerDetailPage() {
     if (notFound) router.replace("/admin/customers");
   }, [notFound, router]);
 
-  if (notFound || !detail) return null;
+  const minElapsed = useMinLoadingElapsed();
+  if (notFound) return null;
+  if (!detail || !minElapsed) return <DetailPageSkeleton />;
 
   return (
     <CustomerDetail

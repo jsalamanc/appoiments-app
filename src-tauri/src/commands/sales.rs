@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::app_db::AppDb;
+use crate::audit;
 use crate::error::AppResult;
 use crate::models::package::Package;
 use crate::models::product::Product;
@@ -15,6 +16,14 @@ use crate::models::sale::SaleWithDetails;
 use crate::models::service::Service;
 use crate::repositories::sales as repo;
 use crate::state::AppState;
+
+/// Lo que se guarda en la bitácora junto con la fila de la venta: sus ítems,
+/// sus pagos y los movimientos de inventario que generó (o revirtió).
+const SALE_RELATED: audit::Related = &[
+    ("sale_items", "sale_id"),
+    ("sale_payments", "sale_id"),
+    ("inventory_movements", "sale_id"),
+];
 
 // ---------------------------------------------------------------------------
 // get_published_catalog (dominio catálogo/inventario)
@@ -75,8 +84,10 @@ pub async fn create_sale_with_inventory(
     payments: Vec<PaymentInput>,
     discount_amount: Option<i64>,
 ) -> AppResult<String> {
-    let user_id = state.require_user()?.id;
-    match &state.db {
+    let actor = state.require_user()?;
+    let user_id = actor.id.clone();
+    let tracker = audit::Tracker::start(&state.db, &actor, "sale.create", "sales", None, SALE_RELATED).await;
+    let sale_id = match &state.db {
         AppDb::Sqlite(_) => {
             state
                 .db
@@ -103,7 +114,9 @@ pub async fn create_sale_with_inventory(
             )
             .await
         }
-    }
+    }?;
+    tracker.finish_created("Registró venta", &sale_id).await;
+    Ok(sale_id)
 }
 
 /// Anula una venta ya registrada: revierte el stock de los productos
@@ -118,7 +131,9 @@ pub async fn void_sale(
     sale_id: String,
     reason: Option<String>,
 ) -> AppResult<()> {
-    state.require_owner()?;
+    let actor = state.require_owner()?;
+    let tracker =
+        audit::Tracker::start(&state.db, &actor, "sale.void", "sales", Some(&sale_id), SALE_RELATED).await;
     match &state.db {
         AppDb::Sqlite(_) => {
             state
@@ -127,7 +142,9 @@ pub async fn void_sale(
                 .await
         }
         AppDb::Postgres(pool) => repo::postgres::void_sale(pool, sale_id, reason).await,
-    }
+    }?;
+    tracker.finish("Anuló venta").await;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -269,7 +286,10 @@ pub async fn link_sale_to_appointment(
     sale_id: String,
     appointment_id: String,
 ) -> AppResult<()> {
-    state.require_user()?;
+    let actor = state.require_user()?;
+    let tracker =
+        audit::Tracker::start(&state.db, &actor, "sale.link_appointment", "sales", Some(&sale_id), SALE_RELATED)
+            .await;
     match &state.db {
         AppDb::Sqlite(_) => {
             state
@@ -278,5 +298,7 @@ pub async fn link_sale_to_appointment(
                 .await
         }
         AppDb::Postgres(pool) => repo::postgres::link_to_appointment(pool, sale_id, appointment_id).await,
-    }
+    }?;
+    tracker.finish("Vinculó venta a cita").await;
+    Ok(())
 }

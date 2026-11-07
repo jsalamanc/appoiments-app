@@ -9,6 +9,8 @@ import { ReportsTrends } from "@/components/admin/reports-trends";
 import { getRevenueTrendsReport, type RevenueTrendsReport } from "@/lib/analytics";
 import { getReportPeriod } from "@/lib/reports";
 import { getPreviousPeriodRange } from "@/lib/sales";
+import { ReportPageSkeleton } from "@/components/admin/skeletons";
+import { useMinLoadingElapsed } from "@/lib/use-min-loading";
 
 export default function ReportsTrendsPage() {
   const searchParams = useSearchParams();
@@ -27,7 +29,8 @@ export default function ReportsTrendsPage() {
     };
   }, [period, range.from]);
 
-  if (!data) return null;
+  const minElapsed = useMinLoadingElapsed();
+  if (!data || !minElapsed) return <ReportPageSkeleton />;
 
   return (
     <OwnerGate>

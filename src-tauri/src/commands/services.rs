@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
 
 use crate::app_db::AppDb;
+use crate::audit;
 use crate::error::{AppError, AppResult};
 use crate::models::service::Service;
 use crate::repositories::services as repo;
@@ -64,11 +65,14 @@ pub async fn create_service(
     state: State<'_, AppState>,
     input: ServiceInput,
 ) -> AppResult<Service> {
-    state.require_user()?;
-    match &state.db {
+    let actor = state.require_user()?;
+    let tracker = audit::Tracker::start(&state.db, &actor, "service.create", "services", None, &[]).await;
+    let result = match &state.db {
         AppDb::Sqlite(_) => state.db.with_sqlite(move |conn| repo::create(conn, input)).await,
         AppDb::Postgres(pool) => repo::postgres::create(pool, input).await,
-    }
+    }?;
+    tracker.finish_created("Creó servicio", &result.id).await;
+    Ok(result)
 }
 
 /// Ver `products::update_product`: la foto vieja se borra solo después de
@@ -80,7 +84,8 @@ pub async fn update_service(
     id: String,
     input: ServiceInput,
 ) -> AppResult<Service> {
-    state.require_user()?;
+    let actor = state.require_user()?;
+    let tracker = audit::Tracker::start(&state.db, &actor, "service.update", "services", Some(&id), &[]).await;
     let old_photo_path = match &state.db {
         AppDb::Sqlite(_) => {
             let id = id.clone();
@@ -100,6 +105,7 @@ pub async fn update_service(
         }
         AppDb::Postgres(pool) => repo::postgres::update(pool, id, input).await,
     }?;
+    tracker.finish("Actualizó servicio").await;
 
     if old_photo_path.is_some() && old_photo_path != new_photo_path {
         if let (Ok(data_dir), Ok(config_dir)) =
@@ -112,30 +118,18 @@ pub async fn update_service(
     Ok(updated)
 }
 
-/// Ver `products::delete_product`: la foto se borra de disco/bucket después
-/// de confirmar el `DELETE` (issue #18).
+/// Borrado lógico (ver `repositories::services::delete`): el registro queda
+/// deshabilitado y deja de mostrarse, pero el historial de ventas, inventario
+/// y citas que lo referencia se conserva. La foto también se conserva.
 #[tauri::command]
-pub async fn delete_service(app: AppHandle, state: State<'_, AppState>, id: String) -> AppResult<()> {
-    state.require_user()?;
-    let old_photo_path = match &state.db {
-        AppDb::Sqlite(_) => {
-            let id = id.clone();
-            state.db.with_sqlite(move |conn| repo::get(conn, id)).await?
-        }
-        AppDb::Postgres(pool) => repo::postgres::get(pool, id.clone()).await?,
-    }
-    .and_then(|s| s.photo_path);
-
+pub async fn delete_service(state: State<'_, AppState>, id: String) -> AppResult<()> {
+    let actor = state.require_user()?;
+    let tracker = audit::Tracker::start(&state.db, &actor, "service.delete", "services", Some(&id), &[("package_items", "service_id")]).await;
     match &state.db {
         AppDb::Sqlite(_) => state.db.with_sqlite(move |conn| repo::delete(conn, id)).await,
         AppDb::Postgres(pool) => repo::postgres::delete(pool, id).await,
     }?;
-
-    if let (Ok(data_dir), Ok(config_dir)) = (app.path().app_data_dir(), app.path().app_config_dir())
-    {
-        cleanup_old_photo(&data_dir, &config_dir, &state.db, old_photo_path.as_deref()).await;
-    }
-
+    tracker.finish("Deshabilitó servicio").await;
     Ok(())
 }
 

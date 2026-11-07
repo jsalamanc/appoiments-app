@@ -25,12 +25,12 @@ pub fn list(
 
     let items = if status == "all" {
         let mut stmt = conn
-            .prepare("SELECT * FROM services ORDER BY created_at DESC LIMIT ?1 OFFSET ?2")?;
+            .prepare("SELECT * FROM services WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT ?1 OFFSET ?2")?;
         let rows = stmt.query_map(params![limit, offset], Service::from_row)?;
         rows.collect::<Result<Vec<_>, _>>()?
     } else {
         let mut stmt = conn.prepare(
-            "SELECT * FROM services WHERE status = ?1 ORDER BY created_at DESC LIMIT ?2 OFFSET ?3",
+            "SELECT * FROM services WHERE status = ?1 AND deleted_at IS NULL ORDER BY created_at DESC LIMIT ?2 OFFSET ?3",
         )?;
         let rows = stmt.query_map(params![status, limit, offset], Service::from_row)?;
         rows.collect::<Result<Vec<_>, _>>()?
@@ -139,10 +139,17 @@ pub fn update(conn: &mut Connection, id: String, input: ServiceInput) -> AppResu
 }
 
 pub fn delete(conn: &mut Connection, id: String) -> AppResult<()> {
-    let affected = conn.execute("DELETE FROM services WHERE id = ?1", params![id])?;
+    let tx = conn.transaction()?;
+    let now = now_iso();
+    let affected = tx.execute(
+        "UPDATE services SET deleted_at = ?1, updated_at = ?1 WHERE id = ?2 AND deleted_at IS NULL",
+        params![now, id],
+    )?;
     if affected == 0 {
         return Err(AppError::NotFound);
     }
+    tx.execute("DELETE FROM package_items WHERE service_id = ?1", params![id])?;
+    tx.commit()?;
     Ok(())
 }
 
@@ -176,15 +183,15 @@ pub mod postgres {
     use crate::util::pagination::{get_range, get_total_pages, CATALOG_PAGE_SIZE};
 
     async fn status_counts(pool: &PgPool) -> AppResult<CatalogCounts> {
-        let all: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM services")
+        let all: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM services WHERE deleted_at IS NULL")
             .fetch_one(pool)
             .await?;
         let published: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM services WHERE status = 'published'")
+            sqlx::query_scalar("SELECT COUNT(*) FROM services WHERE status = 'published' AND deleted_at IS NULL")
                 .fetch_one(pool)
                 .await?;
         let draft: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM services WHERE status = 'draft'")
+            sqlx::query_scalar("SELECT COUNT(*) FROM services WHERE status = 'draft' AND deleted_at IS NULL")
                 .fetch_one(pool)
                 .await?;
         Ok(CatalogCounts {
@@ -211,14 +218,14 @@ pub mod postgres {
         let (limit, offset) = get_range(safe_page, page_size);
 
         let rows = if status == "all" {
-            sqlx::query("SELECT * FROM services ORDER BY created_at DESC LIMIT $1 OFFSET $2")
+            sqlx::query("SELECT * FROM services WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT $1 OFFSET $2")
                 .bind(limit)
                 .bind(offset)
                 .fetch_all(pool)
                 .await?
         } else {
             sqlx::query(
-                "SELECT * FROM services WHERE status = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3",
+                "SELECT * FROM services WHERE status = $1 AND deleted_at IS NULL ORDER BY created_at DESC LIMIT $2 OFFSET $3",
             )
             .bind(&status)
             .bind(limit)
@@ -303,14 +310,22 @@ pub mod postgres {
     }
 
     pub async fn delete(pool: &PgPool, id: String) -> AppResult<()> {
-        let result = sqlx::query("DELETE FROM services WHERE id = $1")
-            .bind(id)
-            .execute(pool)
-            .await?;
-
+        let mut tx = pool.begin().await?;
+        let result = sqlx::query(
+            "UPDATE services SET deleted_at = now(), updated_at = now()
+             WHERE id = $1 AND deleted_at IS NULL",
+        )
+        .bind(&id)
+        .execute(&mut *tx)
+        .await?;
         if result.rows_affected() == 0 {
             return Err(AppError::NotFound);
         }
+        sqlx::query("DELETE FROM package_items WHERE service_id = $1")
+            .bind(&id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
         Ok(())
     }
 

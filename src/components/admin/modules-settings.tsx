@@ -14,9 +14,12 @@ import {
   type CenterModules,
   type ModuleKey,
 } from "@/lib/modules";
+import { SettingsSectionSkeleton } from "@/components/admin/skeletons";
+import { useMinLoadingElapsed } from "@/lib/use-min-loading";
 
 export function ModulesSettings() {
   const [modules, setModules] = useState<CenterModules | null>(null);
+  const minElapsed = useMinLoadingElapsed();
   const [savingKey, setSavingKey] = useState<ModuleKey | null>(null);
 
   useEffect(() => {
@@ -29,7 +32,7 @@ export function ModulesSettings() {
     };
   }, []);
 
-  if (!modules) return null;
+  if (!modules || !minElapsed) return <SettingsSectionSkeleton rows={5} />;
 
   const onToggle = async (key: ModuleKey, enabled: boolean) => {
     const previous = modules;

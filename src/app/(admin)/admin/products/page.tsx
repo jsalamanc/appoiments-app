@@ -7,6 +7,8 @@ import { useEffect, useState } from "react";
 import { ProductsManager } from "@/components/admin/products-manager";
 import type { CatalogCounts, StatusFilter } from "@/lib/pagination";
 import type { Product } from "@/types/database";
+import { CatalogPageSkeleton } from "@/components/admin/skeletons";
+import { useMinLoadingElapsed } from "@/lib/use-min-loading";
 
 type ListResult = {
   items: Product[];
@@ -38,7 +40,8 @@ export default function ProductsPage() {
     };
   }, [page, status, reloadKey]);
 
-  if (!result) return null;
+  const minElapsed = useMinLoadingElapsed();
+  if (!result || !minElapsed) return <CatalogPageSkeleton />;
 
   return (
     <ProductsManager

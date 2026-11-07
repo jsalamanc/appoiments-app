@@ -7,6 +7,8 @@ import { useEffect, useState } from "react";
 import { SaleReceipt } from "@/components/admin/sale-receipt";
 import { getSale } from "@/lib/sales";
 import type { SaleWithDetails } from "@/types/database";
+import { ReceiptSkeleton } from "@/components/admin/skeletons";
+import { useMinLoadingElapsed } from "@/lib/use-min-loading";
 
 type BusinessProfile = { name: string };
 
@@ -37,6 +39,7 @@ export default function SaleReceiptPage() {
     };
   }, [id]);
 
+  const minElapsed = useMinLoadingElapsed();
   if (!id || loadFailed) {
     return (
       <div className="mx-auto max-w-md py-10 text-center text-muted-foreground">
@@ -45,7 +48,7 @@ export default function SaleReceiptPage() {
     );
   }
 
-  if (!sale || !business) return null;
+  if (!sale || !business || !minElapsed) return <ReceiptSkeleton />;
 
   return <SaleReceipt sale={sale} businessName={business.name} />;
 }

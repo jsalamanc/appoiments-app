@@ -17,8 +17,8 @@ function getAppDataDir() {
  *
  * `resolve_photo_cache` garantiza que el archivo exista en disco antes de
  * construir el src: en modo Local es un no-op (el archivo ya está ahí); en
- * modo "Base de datos propia" descarga del bucket configurado si hace falta
- * (ej. una segunda instalación apuntando al mismo Postgres/bucket). Ver
+ * modo "Nube" descarga del bucket configurado si hace falta (ej. una segunda
+ * instalación apuntando al mismo negocio/bucket). Ver
  * `src-tauri/src/commands/bucket.rs`.
  */
 export async function resolvePhotoSrc(

@@ -1,4 +1,5 @@
 pub mod app_db;
+pub mod audit;
 pub mod auth;
 pub mod bucket_config;
 pub mod cognito;
@@ -49,30 +50,13 @@ pub fn run() {
                         db::open(&data_dir).expect("no se pudo abrir la base de datos local");
                     AppState::new(conn)
                 }
-                storage_config::StorageMode::Postgres(ref pg_config) => {
-                    let password = storage_config::get_password(pg_config).expect(
-                        "no se pudo leer la contraseña de PostgreSQL del almacén de credenciales",
-                    );
-                    let ca_cert = storage_config::ca_cert_path(&config_dir);
-                    let ca_cert = ca_cert.exists().then_some(ca_cert.as_path());
-                    let pool = tauri::async_runtime::block_on(app_db::open_postgres(
-                        pg_config, &password, ca_cert,
-                    ))
-                    .expect("no se pudo conectar a PostgreSQL ni correr sus migraciones");
-                    AppState::new_postgres(pool)
-                }
                 storage_config::StorageMode::Nube(ref nube_config) => {
                     let password = storage_config::get_password(&nube_config.connection).expect(
                         "no se pudo leer la contraseña de Nube del almacén de credenciales",
                     );
-                    // Sin certificado CA: el backend gestionado usa un
-                    // certificado de una CA pública estándar, `sslmode=require`
-                    // alcanza (a diferencia de Postgres auto-hospedado, donde el
-                    // usuario puede traer su propio certificado autofirmado).
                     let pool = tauri::async_runtime::block_on(app_db::open_postgres(
                         &nube_config.connection,
                         &password,
-                        None,
                     ))
                     .expect("no se pudo conectar a la base de datos de Nube ni correr sus migraciones");
                     AppState::new_postgres(pool)
@@ -124,6 +108,7 @@ pub fn run() {
             commands::cognito::cognito_login,
             commands::cognito::cognito_logout,
             commands::cognito::cognito_installation_state,
+            commands::audit::list_audit_log,
             commands::auth::auth_login,
             commands::auth::auth_logout,
             commands::auth::auth_resume_session,
@@ -202,7 +187,6 @@ pub fn run() {
             commands::sales::get_revenue_metrics,
             commands::sales::link_sale_to_appointment,
             commands::storage::storage_get_mode,
-            commands::storage::storage_test_connection,
             commands::storage::storage_switch_mode,
             commands::storage::storage_export_local_data,
             commands::vendor::vendor_list_businesses,

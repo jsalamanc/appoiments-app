@@ -200,7 +200,7 @@ export function ProductsManager({
         open={!!toDelete}
         onOpenChange={(value) => !value && setToDelete(null)}
         title="Eliminar producto"
-        description={`¿Seguro que quieres eliminar “${toDelete?.name}”?`}
+        description={`¿Seguro que quieres eliminar “${toDelete?.name}”? Dejará de mostrarse en la aplicación, pero el historial de ventas y movimientos se conserva.`}
         loading={deleting}
         onConfirm={handleDelete}
       />

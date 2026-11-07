@@ -8,6 +8,8 @@ import { ModuleGate } from "@/components/admin/module-gate";
 import { ServicesManager } from "@/components/admin/services-manager";
 import type { CatalogCounts, StatusFilter } from "@/lib/pagination";
 import type { Service } from "@/types/database";
+import { CatalogPageSkeleton } from "@/components/admin/skeletons";
+import { useMinLoadingElapsed } from "@/lib/use-min-loading";
 
 type ListResult = {
   items: Service[];
@@ -39,7 +41,8 @@ export default function ServicesPage() {
     };
   }, [page, status, reloadKey]);
 
-  if (!result) return null;
+  const minElapsed = useMinLoadingElapsed();
+  if (!result || !minElapsed) return <CatalogPageSkeleton />;
 
   return (
     <ModuleGate module="services">

@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, State};
 
 use crate::app_db::AppDb;
+use crate::audit;
 use crate::error::{AppError, AppResult};
 use crate::models::product::Product;
 use crate::repositories::products as repo;
@@ -63,11 +64,14 @@ pub async fn create_product(
     state: State<'_, AppState>,
     input: ProductInput,
 ) -> AppResult<Product> {
-    state.require_user()?;
-    match &state.db {
+    let actor = state.require_user()?;
+    let tracker = audit::Tracker::start(&state.db, &actor, "product.create", "products", None, &[]).await;
+    let result = match &state.db {
         AppDb::Sqlite(_) => state.db.with_sqlite(move |conn| repo::create(conn, input)).await,
         AppDb::Postgres(pool) => repo::postgres::create(pool, input).await,
-    }
+    }?;
+    tracker.finish_created("Creó producto", &result.id).await;
+    Ok(result)
 }
 
 /// Si la foto cambia (o se quita), la vieja se borra de disco/bucket después
@@ -81,7 +85,8 @@ pub async fn update_product(
     id: String,
     input: ProductInput,
 ) -> AppResult<Product> {
-    state.require_user()?;
+    let actor = state.require_user()?;
+    let tracker = audit::Tracker::start(&state.db, &actor, "product.update", "products", Some(&id), &[]).await;
     let old_photo_path = match &state.db {
         AppDb::Sqlite(_) => {
             let id = id.clone();
@@ -101,6 +106,7 @@ pub async fn update_product(
         }
         AppDb::Postgres(pool) => repo::postgres::update(pool, id, input).await,
     }?;
+    tracker.finish("Actualizó producto").await;
 
     if old_photo_path.is_some() && old_photo_path != new_photo_path {
         if let (Ok(data_dir), Ok(config_dir)) =
@@ -113,30 +119,18 @@ pub async fn update_product(
     Ok(updated)
 }
 
-/// Borra la foto de disco/bucket después de que la fila se borra con éxito
-/// (ver `cleanup_old_photo`) — issue #18, para no dejar imágenes huérfanas.
+/// Borrado lógico (ver `repositories::products::delete`): el registro queda
+/// deshabilitado y deja de mostrarse, pero el historial de ventas, inventario
+/// y citas que lo referencia se conserva. La foto también se conserva.
 #[tauri::command]
-pub async fn delete_product(app: AppHandle, state: State<'_, AppState>, id: String) -> AppResult<()> {
-    state.require_user()?;
-    let old_photo_path = match &state.db {
-        AppDb::Sqlite(_) => {
-            let id = id.clone();
-            state.db.with_sqlite(move |conn| repo::get(conn, id)).await?
-        }
-        AppDb::Postgres(pool) => repo::postgres::get(pool, id.clone()).await?,
-    }
-    .and_then(|p| p.photo_path);
-
+pub async fn delete_product(state: State<'_, AppState>, id: String) -> AppResult<()> {
+    let actor = state.require_user()?;
+    let tracker = audit::Tracker::start(&state.db, &actor, "product.delete", "products", Some(&id), &[("inventory_movements", "product_id"), ("package_items", "product_id")]).await;
     match &state.db {
         AppDb::Sqlite(_) => state.db.with_sqlite(move |conn| repo::delete(conn, id)).await,
         AppDb::Postgres(pool) => repo::postgres::delete(pool, id).await,
     }?;
-
-    if let (Ok(data_dir), Ok(config_dir)) = (app.path().app_data_dir(), app.path().app_config_dir())
-    {
-        cleanup_old_photo(&data_dir, &config_dir, &state.db, old_photo_path.as_deref()).await;
-    }
-
+    tracker.finish("Deshabilitó producto").await;
     Ok(())
 }
 
@@ -159,8 +153,10 @@ pub async fn set_product_stock(
     note: Option<String>,
     unit_cost: Option<i64>,
 ) -> AppResult<i64> {
-    state.require_user()?;
-    match &state.db {
+    let actor = state.require_user()?;
+    let stock_detail = format!("nuevo stock {stock}{}", note.as_deref().map(|n| format!(", nota: {n}")).unwrap_or_default());
+    let tracker = audit::Tracker::start(&state.db, &actor, "product.stock_adjust", "products", Some(&product_id), &[]).await;
+    let result = match &state.db {
         AppDb::Sqlite(_) => {
             state
                 .db
@@ -170,14 +166,16 @@ pub async fn set_product_stock(
         AppDb::Postgres(pool) => {
             repo::postgres::set_stock(pool, product_id, stock, note, unit_cost).await
         }
-    }
+    }?;
+    tracker.detail(stock_detail).finish("Ajustó stock de").await;
+    Ok(result)
 }
 
 /// Copia la foto elegida por el usuario (file picker, ruta absoluta) al
 /// directorio de datos de la app y devuelve la ruta relativa a guardar en
 /// `photo_path` (el comando NO actualiza la fila; el frontend llama luego a
-/// `update_product` con el valor devuelto). En modo "Base de datos propia"
-/// también la sube al bucket configurado (ver `import_and_sync_photo`).
+/// `update_product` con el valor devuelto). En modo "Nube" también la sube
+/// al bucket configurado (ver `import_and_sync_photo`).
 #[tauri::command]
 pub async fn import_product_photo(
     app: AppHandle,

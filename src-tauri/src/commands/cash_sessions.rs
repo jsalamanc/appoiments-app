@@ -3,6 +3,7 @@
 use tauri::State;
 
 use crate::app_db::AppDb;
+use crate::audit;
 use crate::error::AppResult;
 use crate::models::cash_session::CashSession;
 use crate::repositories::cash_sessions as repo;
@@ -37,8 +38,10 @@ pub async fn open_cash_session(
     state: State<'_, AppState>,
     opening_amount: i64,
 ) -> AppResult<CashSession> {
-    let user_id = state.require_user()?.id;
-    match &state.db {
+    let actor = state.require_user()?;
+    let user_id = actor.id.clone();
+    let tracker = audit::Tracker::start(&state.db, &actor, "cash_session.open", "cash_sessions", None, &[]).await;
+    let result = match &state.db {
         AppDb::Sqlite(_) => {
             state
                 .db
@@ -46,7 +49,12 @@ pub async fn open_cash_session(
                 .await
         }
         AppDb::Postgres(pool) => repo::postgres::open(pool, Some(user_id), opening_amount).await,
-    }
+    }?;
+    tracker
+        .detail(format!("monto inicial {opening_amount}"))
+        .finish_created("Abrió caja", &result.id)
+        .await;
+    Ok(result)
 }
 
 #[tauri::command]
@@ -56,8 +64,10 @@ pub async fn close_cash_session(
     counted_amount: i64,
     notes: Option<String>,
 ) -> AppResult<CashSession> {
-    let user_id = state.require_user()?.id;
-    match &state.db {
+    let actor = state.require_user()?;
+    let user_id = actor.id.clone();
+    let tracker = audit::Tracker::start(&state.db, &actor, "cash_session.close", "cash_sessions", Some(&id), &[]).await;
+    let result = match &state.db {
         AppDb::Sqlite(_) => {
             state
                 .db
@@ -67,5 +77,10 @@ pub async fn close_cash_session(
         AppDb::Postgres(pool) => {
             repo::postgres::close(pool, id, Some(user_id), counted_amount, notes).await
         }
-    }
+    }?;
+    tracker
+        .detail(format!("monto contado {counted_amount}"))
+        .finish("Cerró caja")
+        .await;
+    Ok(result)
 }

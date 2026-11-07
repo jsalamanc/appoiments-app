@@ -1,13 +1,12 @@
 //! Configuración del bucket de almacenamiento en la nube (S3-compatible) para
-//! las imágenes del catálogo, obligatorio cuando el modo de almacenamiento es
-//! "Base de datos propia" (ver [`crate::storage_config`]).
+//! las imágenes del catálogo, necesario en modo "Nube" para poder subir fotos
+//! del catálogo (ver [`crate::storage_config`]).
 //!
 //! Mismo patrón que `storage_config.rs`: los datos no sensibles viven en un
 //! archivo JSON en el directorio de configuración de la app (`bucket.json`,
-//! separado de `storage.json` para no tocar el formato ya probado del modo
-//! Postgres), y el secreto (Secret Access Key) vive en el almacén de
-//! credenciales del sistema operativo vía el crate `keyring` — nunca en disco
-//! en texto plano.
+//! separado de `storage.json`), y el secreto (Secret Access Key) vive en el
+//! almacén de credenciales del sistema operativo vía el crate `keyring` —
+//! nunca en disco en texto plano.
 //!
 //! El diseño es "un solo backend S3-compatible": AWS S3, Cloudflare R2,
 //! Backblaze B2, DigitalOcean Spaces y MinIO hablan la misma API, así que

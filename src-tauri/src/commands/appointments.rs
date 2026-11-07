@@ -2,6 +2,7 @@ use serde::Deserialize;
 use tauri::State;
 
 use crate::app_db::AppDb;
+use crate::audit;
 use crate::commands::customers::{AppointmentWithDetails, ServiceRef};
 use crate::error::AppResult;
 use crate::models::appointment::Appointment;
@@ -54,11 +55,15 @@ pub async fn create_appointment(
     state: State<'_, AppState>,
     input: AppointmentInput,
 ) -> AppResult<Appointment> {
-    state.require_user()?;
-    match &state.db {
+    let actor = state.require_user()?;
+    let starts_at = input.starts_at.clone();
+    let tracker = audit::Tracker::start(&state.db, &actor, "appointment.create", "appointments", None, &[]).await;
+    let result = match &state.db {
         AppDb::Sqlite(_) => state.db.with_sqlite(move |conn| repo::create(conn, input)).await,
         AppDb::Postgres(pool) => repo::postgres::create(pool, input).await,
-    }
+    }?;
+    tracker.detail(format!("para el {starts_at}")).finish_created("Creó cita", &result.id).await;
+    Ok(result)
 }
 
 #[tauri::command]
@@ -67,8 +72,10 @@ pub async fn update_appointment(
     id: String,
     input: AppointmentInput,
 ) -> AppResult<Appointment> {
-    state.require_user()?;
-    match &state.db {
+    let actor = state.require_user()?;
+    let starts_at = input.starts_at.clone();
+    let tracker = audit::Tracker::start(&state.db, &actor, "appointment.update", "appointments", Some(&id), &[]).await;
+    let result = match &state.db {
         AppDb::Sqlite(_) => {
             state
                 .db
@@ -76,7 +83,9 @@ pub async fn update_appointment(
                 .await
         }
         AppDb::Postgres(pool) => repo::postgres::update(pool, id, input).await,
-    }
+    }?;
+    tracker.detail(format!("para el {starts_at}")).finish("Actualizó cita").await;
+    Ok(result)
 }
 
 #[tauri::command]
@@ -85,8 +94,10 @@ pub async fn set_appointment_status(
     appointment_id: String,
     status: String,
 ) -> AppResult<Appointment> {
-    state.require_user()?;
-    match &state.db {
+    let actor = state.require_user()?;
+    let new_status = status.clone();
+    let tracker = audit::Tracker::start(&state.db, &actor, "appointment.set_status", "appointments", Some(&appointment_id), &[]).await;
+    let result = match &state.db {
         AppDb::Sqlite(_) => {
             state
                 .db
@@ -94,7 +105,9 @@ pub async fn set_appointment_status(
                 .await
         }
         AppDb::Postgres(pool) => repo::postgres::set_status(pool, appointment_id, status).await,
-    }
+    }?;
+    tracker.detail(format!("nuevo estado: {new_status}")).finish("Cambió estado de cita").await;
+    Ok(result)
 }
 
 /// Hoy `completeAppointmentWithSale` (src/lib/appointments.ts) hace dos
@@ -110,8 +123,9 @@ pub async fn complete_appointment_with_sale(
     appointment_id: String,
     sale_id: String,
 ) -> AppResult<()> {
-    state.require_user()?;
-    match &state.db {
+    let actor = state.require_user()?;
+    let tracker = audit::Tracker::start(&state.db, &actor, "appointment.complete_with_sale", "appointments", Some(&appointment_id), &[]).await;
+    let result = match &state.db {
         AppDb::Sqlite(_) => {
             state
                 .db
@@ -119,7 +133,9 @@ pub async fn complete_appointment_with_sale(
                 .await
         }
         AppDb::Postgres(pool) => repo::postgres::complete_with_sale(pool, appointment_id, sale_id).await,
-    }
+    }?;
+    tracker.finish("Completó cita con venta").await;
+    Ok(result)
 }
 
 /// Lectura mínima y de solo lectura para el selector de servicio del

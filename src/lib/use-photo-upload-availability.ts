@@ -3,11 +3,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 
-type StorageModeTag = { mode: "local" | "postgres" | "nube" };
+type StorageModeTag = { mode: "local" | "nube" };
 
 /**
  * En modo local las fotos se guardan en disco, sin requisitos. En modo
- * "Base de datos propia"/"Nube" se suben a un bucket S3-compatible (ver
+ * "Nube" se suben a un bucket S3-compatible (ver
  * `util::photos::import_and_sync_photo` en Rust) — si todavía no hay uno
  * configurado, la subida fallaría a medio formulario, así que la UI debe
  * deshabilitar el selector de foto antes de llegar ahí.

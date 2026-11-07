@@ -104,9 +104,7 @@ pub async fn import_and_sync_photo(
 
 async fn upload_to_bucket(data_dir: &Path, config_dir: &Path, photo_path: &str) -> AppResult<()> {
     let cfg = bucket_config::load_bucket(config_dir).ok_or_else(|| {
-        AppError::Internal(
-            "no hay un bucket configurado; el modo \"Base de datos propia\" requiere uno".to_string(),
-        )
+        AppError::Internal("no hay un bucket configurado para subir fotos".to_string())
     })?;
     let secret = bucket_config::get_bucket_secret(&cfg)
         .map_err(|e| AppError::Internal(format!("no se pudo leer la credencial del bucket: {e}")))?;

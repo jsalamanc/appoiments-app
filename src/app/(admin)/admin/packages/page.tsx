@@ -8,6 +8,8 @@ import { ModuleGate } from "@/components/admin/module-gate";
 import { PackagesManager } from "@/components/admin/packages-manager";
 import type { CatalogCounts, StatusFilter } from "@/lib/pagination";
 import type { PackageWithItems, Product, Service } from "@/types/database";
+import { CatalogPageSkeleton } from "@/components/admin/skeletons";
+import { useMinLoadingElapsed } from "@/lib/use-min-loading";
 
 type ListPackagesResult = {
   items: PackageWithItems[];
@@ -62,7 +64,8 @@ export default function PackagesPage() {
     };
   }, [page, status, reloadKey]);
 
-  if (!result) return null;
+  const minElapsed = useMinLoadingElapsed();
+  if (!result || !minElapsed) return <CatalogPageSkeleton />;
 
   return (
     <ModuleGate module="packages">

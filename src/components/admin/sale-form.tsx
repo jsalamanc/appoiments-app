@@ -38,6 +38,8 @@ import type {
   SaleItemType,
   Service,
 } from "@/types/database";
+import { SkeletonRegion } from "@/components/admin/skeletons";
+import { Skeleton } from "@/components/ui/skeleton";
 
 const PAYMENT_METHOD_OPTIONS: { value: PaymentMethod; label: string }[] = [
   { value: "cash", label: "Efectivo" },
@@ -509,9 +511,9 @@ export function SaleForm({ prefill }: { prefill?: SaleFormPrefill }) {
       </FadeIn>
 
       {catalogLoading && (
-        <FadeIn className="rounded-3xl border border-dashed border-border bg-card shadow-sm p-6 text-sm text-muted-foreground">
-          Cargando catálogo publicado...
-        </FadeIn>
+        <SkeletonRegion label="Cargando catálogo publicado…">
+          <Skeleton className="h-16 w-full rounded-3xl" />
+        </SkeletonRegion>
       )}
 
       {!catalogLoading && catalogError && (
@@ -665,9 +667,11 @@ export function SaleForm({ prefill }: { prefill?: SaleFormPrefill }) {
           </div>
 
           {catalogLoading ? (
-            <p className="rounded-2xl border border-dashed border-border px-4 py-6 text-sm text-muted-foreground">
-              Cargando catálogo...
-            </p>
+            <SkeletonRegion label="Cargando catálogo…" className="grid gap-2 sm:grid-cols-2">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <Skeleton key={i} className="h-20 w-full rounded-2xl" />
+              ))}
+            </SkeletonRegion>
           ) : !canSell ? (
             <p className="rounded-2xl border border-dashed border-border px-4 py-6 text-sm text-muted-foreground">
               {draftCount > 0

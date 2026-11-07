@@ -10,10 +10,13 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { getBusinessHours, updateBusinessHours, WEEKDAY_LABELS } from "@/lib/business-hours";
 import type { BusinessHoursInput } from "@/types/database";
+import { ListSkeleton, SkeletonRegion } from "@/components/admin/skeletons";
+import { useMinLoadingElapsed } from "@/lib/use-min-loading";
 
 export function BusinessHoursSettings() {
   const [hours, setHours] = useState<BusinessHoursInput[]>([]);
   const [loading, setLoading] = useState(true);
+  const minElapsed = useMinLoadingElapsed();
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -90,10 +93,10 @@ export function BusinessHoursSettings() {
           una excepción propia.
         </p>
 
-        {loading ? (
-          <p className="mt-4 text-sm text-muted-foreground">
-            Cargando horario...
-          </p>
+        {loading || !minElapsed ? (
+          <SkeletonRegion label="Cargando horario…" className="mt-6">
+            <ListSkeleton rows={7} />
+          </SkeletonRegion>
         ) : (
           <div className="mt-6 space-y-2">
             {hours.map((day) => (

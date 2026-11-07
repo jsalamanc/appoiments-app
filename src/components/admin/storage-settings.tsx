@@ -1,9 +1,9 @@
 "use client";
 
 import { invoke } from "@tauri-apps/api/core";
-import { open, save } from "@tauri-apps/plugin-dialog";
+import { save } from "@tauri-apps/plugin-dialog";
 import { relaunch } from "@tauri-apps/plugin-process";
-import { Check, Cloud, Database, Download, FileLock2, HardDrive, X } from "lucide-react";
+import { Check, Cloud, Download, HardDrive } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 
@@ -25,27 +25,23 @@ import { FadeIn } from "@/components/motion/fade-in";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { STORAGE_MIGRATION_TOAST_ID } from "@/lib/storage-migration";
+import { ListSkeleton, SettingsSectionSkeleton, SkeletonRegion } from "@/components/admin/skeletons";
+import { useMinLoadingElapsed } from "@/lib/use-min-loading";
 
-type PostgresConfig = {
+type NubeConfig = {
   host: string;
   port: number;
   database: string;
   username: string;
   sslmode: string;
-};
-
-type NubeConfig = PostgresConfig & {
   businessId: string;
   businessName: string;
   installationId: string;
 };
 
-type StorageMode =
-  | { mode: "local" }
-  | ({ mode: "postgres" } & PostgresConfig)
-  | ({ mode: "nube" } & NubeConfig);
+type StorageMode = { mode: "local" } | ({ mode: "nube" } & NubeConfig);
 
-type SelectedMode = "local" | "postgres" | "nube";
+type SelectedMode = "local" | "nube";
 
 type MigrationSummary = {
   businessProfile: number;
@@ -99,14 +95,6 @@ const SUBSCRIPTION_LABELS: Record<string, string> = {
   canceled: "Cancelada",
 };
 
-const EMPTY_PG_CONFIG: PostgresConfig = {
-  host: "",
-  port: 5432,
-  database: "",
-  username: "",
-  sslmode: "prefer",
-};
-
 const EMPTY_BUCKET_CONFIG: BucketConfig = {
   provider: "aws_s3",
   endpoint: "",
@@ -157,17 +145,14 @@ const PROVIDER_PRESETS: Record<
 
 export function StorageSettings() {
   const [loading, setLoading] = useState(true);
+  const minElapsed = useMinLoadingElapsed();
   const [currentMode, setCurrentMode] = useState<SelectedMode>("local");
   const [selected, setSelected] = useState<SelectedMode>("local");
-  const [pgConfig, setPgConfig] = useState<PostgresConfig>(EMPTY_PG_CONFIG);
-  const [password, setPassword] = useState("");
-  const [caCertPath, setCaCertPath] = useState<string | null>(null);
   const [migrateData, setMigrateData] = useState(true);
   // Por default false a propósito: reemplazar borra TODO lo que haya en el
   // destino (local o remoto) antes de escribir los datos nuevos — el usuario
   // tiene que marcarlo explícitamente, nunca es el comportamiento implícito.
   const [replaceData, setReplaceData] = useState(false);
-  const [testing, setTesting] = useState(false);
   const [bucketConfig, setBucketConfig] = useState<BucketConfig>(EMPTY_BUCKET_CONFIG);
   const [bucketSecret, setBucketSecret] = useState("");
   const [bucketTesting, setBucketTesting] = useState(false);
@@ -192,17 +177,7 @@ export function StorageSettings() {
       const mode = await invoke<StorageMode>("storage_get_mode");
       setCurrentMode(mode.mode);
       setSelected(mode.mode);
-      if (mode.mode === "postgres") {
-        setPgConfig({
-          host: mode.host,
-          port: mode.port,
-          database: mode.database,
-          username: mode.username,
-          sslmode: mode.sslmode,
-        });
-        const bucket = await invoke<BucketConfig | null>("bucket_get_config");
-        if (bucket) setBucketConfig(bucket);
-      } else if (mode.mode === "nube") {
+      if (mode.mode === "nube") {
         // Ya conectada a un negocio: se muestra como "elegido" sin que haga
         // falta volver a tocar nada — el usuario solo ve esto si entra a
         // Ajustes mientras ya está en modo Nube.
@@ -308,15 +283,6 @@ export function StorageSettings() {
     }
   };
 
-  const pgFieldsComplete =
-    pgConfig.host.trim() !== "" &&
-    pgConfig.database.trim() !== "" &&
-    pgConfig.username.trim() !== "" &&
-    password !== "";
-
-  const needsCaCert =
-    pgConfig.sslmode === "verify-ca" || pgConfig.sslmode === "verify-full";
-
   const bucketFieldsComplete =
     bucketConfig.endpoint.trim() !== "" &&
     bucketConfig.region.trim() !== "" &&
@@ -324,47 +290,16 @@ export function StorageSettings() {
     bucketConfig.accessKeyId.trim() !== "" &&
     bucketSecret !== "";
 
-  // En modo Nube el bucket es opcional (a diferencia de "Base de datos
-  // propia"): el usuario puede guardar sin configurar uno y simplemente no
-  // podrá subir fotos del catálogo hasta que lo haga (ver
-  // `usePhotoUploadAvailability`). Dejarlo completamente vacío es una
-  // elección válida; dejarlo a medias no lo es.
+  // En modo Nube el bucket es opcional: el usuario puede guardar sin
+  // configurar uno y simplemente no podrá subir fotos del catálogo hasta que
+  // lo haga (ver `usePhotoUploadAvailability`). Dejarlo completamente vacío
+  // es una elección válida; dejarlo a medias no lo es.
   const bucketFieldsEmpty =
     bucketConfig.endpoint.trim() === "" &&
     bucketConfig.region.trim() === "" &&
     bucketConfig.bucket.trim() === "" &&
     bucketConfig.accessKeyId.trim() === "" &&
     bucketSecret === "";
-
-  const pickCaCert = async () => {
-    const selected = await open({
-      multiple: false,
-      filters: [{ name: "Certificado", extensions: ["pem", "crt", "cer"] }],
-    });
-    if (typeof selected === "string") {
-      setCaCertPath(selected);
-    }
-  };
-
-  const testConnection = async () => {
-    if (!pgFieldsComplete) {
-      toast.error("Completa host, base de datos, usuario y contraseña");
-      return;
-    }
-    setTesting(true);
-    try {
-      await invoke("storage_test_connection", {
-        config: pgConfig,
-        password,
-        caCertPath: needsCaCert ? caCertPath : null,
-      });
-      toast.success("Conexión exitosa");
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "No se pudo conectar");
-    } finally {
-      setTesting(false);
-    }
-  };
 
   const testBucketConnection = async () => {
     if (!bucketFieldsComplete) {
@@ -431,18 +366,6 @@ export function StorageSettings() {
           migrateData: migrating,
           replaceData: migrating && replaceData,
         });
-      } else if (selected === "postgres") {
-        const migrating = currentMode === "local" && migrateData;
-        summary = await invoke<MigrationSummary | null>("storage_switch_mode", {
-          mode: "postgres",
-          config: pgConfig,
-          password,
-          caCertPath: needsCaCert ? caCertPath : null,
-          migrateData: migrating,
-          replaceData: migrating && replaceData,
-          bucketConfig,
-          bucketSecret,
-        });
       } else {
         if (!selectedBusiness) throw new Error("Elige un negocio primero");
         const migrating = currentMode === "local" && migrateData;
@@ -482,11 +405,10 @@ export function StorageSettings() {
     }
   };
 
-  if (loading) return null;
+  if (loading || !minElapsed) return <SettingsSectionSkeleton rows={3} />;
 
   const canSave =
     selected === "local" ||
-    (selected === "postgres" && pgFieldsComplete && bucketFieldsComplete) ||
     (selected === "nube" &&
       connectOutcome === "connected" &&
       (bucketFieldsComplete || bucketFieldsEmpty));
@@ -514,13 +436,6 @@ export function StorageSettings() {
             onSelect={() => setSelected("local")}
           />
           <ModeOption
-            icon={<Database className="size-5" />}
-            title="Base de datos propia"
-            description="Conéctate a un servidor PostgreSQL que tú administras (local en red o en tu propia nube)."
-            selected={selected === "postgres"}
-            onSelect={() => setSelected("postgres")}
-          />
-          <ModeOption
             icon={<Cloud className="size-5" />}
             title="Nube"
             description="Conecta un negocio a la base de datos gestionada de tu cuenta de Aura Studio."
@@ -528,146 +443,6 @@ export function StorageSettings() {
             onSelect={() => setSelected("nube")}
           />
         </div>
-
-        {selected === "postgres" && (
-          <>
-          <div className="mt-5 space-y-4 rounded-2xl border border-border/60 p-4">
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="space-y-2">
-                <Label htmlFor="pg-host">Host</Label>
-                <Input
-                  id="pg-host"
-                  placeholder="db.ejemplo.com"
-                  value={pgConfig.host}
-                  onChange={(e) =>
-                    setPgConfig((c) => ({ ...c, host: e.target.value }))
-                  }
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="pg-port">Puerto</Label>
-                <Input
-                  id="pg-port"
-                  type="number"
-                  value={pgConfig.port}
-                  onChange={(e) =>
-                    setPgConfig((c) => ({
-                      ...c,
-                      port: Number(e.target.value) || 0,
-                    }))
-                  }
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="pg-database">Base de datos</Label>
-                <Input
-                  id="pg-database"
-                  value={pgConfig.database}
-                  onChange={(e) =>
-                    setPgConfig((c) => ({ ...c, database: e.target.value }))
-                  }
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="pg-username">Usuario</Label>
-                <Input
-                  id="pg-username"
-                  value={pgConfig.username}
-                  onChange={(e) =>
-                    setPgConfig((c) => ({ ...c, username: e.target.value }))
-                  }
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="pg-password">Contraseña</Label>
-                <Input
-                  id="pg-password"
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="pg-sslmode">SSL</Label>
-                <select
-                  id="pg-sslmode"
-                  value={pgConfig.sslmode}
-                  onChange={(e) => {
-                    const sslmode = e.target.value;
-                    setPgConfig((c) => ({ ...c, sslmode }));
-                    if (sslmode !== "verify-ca" && sslmode !== "verify-full") {
-                      setCaCertPath(null);
-                    }
-                  }}
-                  className="flex h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
-                >
-                  <option value="disable">disable</option>
-                  <option value="prefer">prefer</option>
-                  <option value="require">require</option>
-                  <option value="verify-ca">verify-ca</option>
-                  <option value="verify-full">verify-full</option>
-                </select>
-              </div>
-            </div>
-
-            {needsCaCert && (
-              <div className="space-y-2">
-                <Label>Certificado CA</Label>
-                <p className="text-xs text-muted-foreground">
-                  {pgConfig.sslmode === "verify-ca"
-                    ? "verify-ca"
-                    : "verify-full"}{" "}
-                  necesita el certificado de la autoridad (CA) que firmó el
-                  certificado de tu servidor para poder validarlo — normalmente
-                  hace falta si usas un certificado autofirmado o de una CA
-                  privada.
-                </p>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button type="button" variant="secondary" onClick={() => void pickCaCert()}>
-                    <FileLock2 data-icon="inline-start" />
-                    {caCertPath ? "Cambiar certificado" : "Elegir certificado (.pem/.crt)"}
-                  </Button>
-                  {caCertPath && (
-                    <>
-                      <span className="truncate text-sm text-muted-foreground">
-                        {caCertPath.split(/[\\/]/).pop()}
-                      </span>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setCaCertPath(null)}
-                      >
-                        <X data-icon="inline-start" />
-                        Quitar
-                      </Button>
-                    </>
-                  )}
-                </div>
-              </div>
-            )}
-
-            <Button
-              type="button"
-              variant="secondary"
-              disabled={testing || !pgFieldsComplete}
-              onClick={() => void testConnection()}
-            >
-              {testing ? "Probando..." : "Probar conexión"}
-            </Button>
-          </div>
-
-          <BucketConfigSection
-            bucketConfig={bucketConfig}
-            setBucketConfig={setBucketConfig}
-            bucketSecret={bucketSecret}
-            setBucketSecret={setBucketSecret}
-            bucketTesting={bucketTesting}
-            bucketFieldsComplete={bucketFieldsComplete}
-            onTestConnection={() => void testBucketConnection()}
-          />
-          </>
-        )}
 
         {selected === "nube" && (
           <div className="mt-5 space-y-4 rounded-2xl border border-border/60 p-4">
@@ -693,7 +468,9 @@ export function StorageSettings() {
                 </div>
 
                 {businessesLoading ? (
-                  <p className="text-sm text-muted-foreground">Cargando...</p>
+                  <SkeletonRegion label="Cargando negocios…">
+                    <ListSkeleton rows={3} />
+                  </SkeletonRegion>
                 ) : (
                   <div className="space-y-2">
                     {(businesses ?? []).map((business) => {
@@ -792,7 +569,6 @@ export function StorageSettings() {
                     bucketTesting={bucketTesting}
                     bucketFieldsComplete={bucketFieldsComplete}
                     onTestConnection={() => void testBucketConnection()}
-                    required={false}
                   />
                 )}
               </>
@@ -819,16 +595,12 @@ export function StorageSettings() {
                 ? currentMode !== "local" && migrateData
                   ? "La app copiará tus datos hacia una base local nueva y vacía, volverá a usarla y se reiniciará."
                   : "La app volverá a usar su base de datos local y se reiniciará."
-                : selected === "nube"
-                  ? currentMode === "local" && migrateData
-                    ? `La app se conectará al negocio "${selectedBusiness?.businessName}" en la nube, copiará tus datos locales hacia él y se reiniciará.`
-                    : `La app se conectará al negocio "${selectedBusiness?.businessName}" en la nube y se reiniciará. Los datos que tengas localmente no se copian.`
-                  : currentMode === "local" && migrateData
-                    ? "La app se conectará a la base de datos PostgreSQL indicada, copiará tus datos locales hacia ella y se reiniciará."
-                    : "La app se conectará a la base de datos PostgreSQL indicada y se reiniciará. Los datos que tengas localmente no se copian — esta base externa debe estar vacía o ya tener los datos que quieres usar."}
+                : currentMode === "local" && migrateData
+                  ? `La app se conectará al negocio "${selectedBusiness?.businessName}" en la nube, copiará tus datos locales hacia él y se reiniciará.`
+                  : `La app se conectará al negocio "${selectedBusiness?.businessName}" en la nube y se reiniciará. Los datos que tengas localmente no se copian.`}
             </AlertDialogDescription>
           </AlertDialogHeader>
-          {currentMode === "local" && (selected === "postgres" || selected === "nube") && (
+          {currentMode === "local" && selected === "nube" && (
             <div className="space-y-3">
               <label className="flex items-start gap-2 text-sm">
                 <Checkbox
@@ -979,10 +751,11 @@ function ModeOption({
 }
 
 /**
- * Formulario de bucket S3-compatible para las fotos del catálogo — usado tal
- * cual tanto por el modo "Base de datos propia" como por "Nube" (issue #18:
- * el backend gestionado no provee almacenamiento de imágenes propio, así que
- * ambos modos le piden el mismo bucket al usuario).
+ * Formulario de bucket S3-compatible para las fotos del catálogo del modo
+ * "Nube" (issue #18: el backend gestionado no provee almacenamiento de
+ * imágenes propio). El bucket es opcional: se puede guardar sin
+ * configurarlo, solo que mientras tanto no se podrán subir fotos del
+ * catálogo.
  */
 function BucketConfigSection({
   bucketConfig,
@@ -992,7 +765,6 @@ function BucketConfigSection({
   bucketTesting,
   bucketFieldsComplete,
   onTestConnection,
-  required = true,
 }: {
   bucketConfig: BucketConfig;
   setBucketConfig: React.Dispatch<React.SetStateAction<BucketConfig>>;
@@ -1001,23 +773,17 @@ function BucketConfigSection({
   bucketTesting: boolean;
   bucketFieldsComplete: boolean;
   onTestConnection: () => void;
-  /** En modo Nube el bucket es opcional (a diferencia de "Base de datos
-   * propia"): se puede guardar sin configurarlo, solo que mientras tanto no
-   * se podrán subir fotos del catálogo. */
-  required?: boolean;
 }) {
   return (
     <div className="mt-4 space-y-4 rounded-2xl border border-border/60 p-4">
       <div>
-        <h3 className="font-medium">
-          Bucket de imágenes {required ? "(obligatorio)" : "(opcional)"}
-        </h3>
+        <h3 className="font-medium">Bucket de imágenes (opcional)</h3>
         <p className="text-xs text-muted-foreground">
           Las imágenes del catálogo se suben a este bucket S3-compatible (AWS
           S3, Cloudflare R2, Backblaze B2, DigitalOcean Spaces, MinIO u otro)
-          en vez de quedar solo en este equipo.
-          {!required &&
-            " Puedes guardar sin configurarlo, pero no podrás subir fotos de productos, servicios ni paquetes hasta que lo hagas."}
+          en vez de quedar solo en este equipo. Puedes guardar sin
+          configurarlo, pero no podrás subir fotos de productos, servicios ni
+          paquetes hasta que lo hagas.
         </p>
       </div>
 

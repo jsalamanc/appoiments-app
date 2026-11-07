@@ -35,7 +35,7 @@ pub fn published_catalog(conn: &mut Connection, search: Option<String>) -> AppRe
     let pattern = format!("%{search}%");
 
     let mut products_stmt = conn.prepare(
-        "SELECT * FROM products WHERE status = 'published' AND (?1 = '' OR lower(name) LIKE ?2)
+        "SELECT * FROM products WHERE status = 'published' AND deleted_at IS NULL AND (?1 = '' OR lower(name) LIKE ?2)
          ORDER BY name ASC LIMIT ?3",
     )?;
     let products = products_stmt
@@ -43,7 +43,7 @@ pub fn published_catalog(conn: &mut Connection, search: Option<String>) -> AppRe
         .collect::<Result<Vec<_>, _>>()?;
 
     let mut services_stmt = conn.prepare(
-        "SELECT * FROM services WHERE status = 'published' AND (?1 = '' OR lower(name) LIKE ?2)
+        "SELECT * FROM services WHERE status = 'published' AND deleted_at IS NULL AND (?1 = '' OR lower(name) LIKE ?2)
          ORDER BY name ASC LIMIT ?3",
     )?;
     let services = services_stmt
@@ -51,7 +51,7 @@ pub fn published_catalog(conn: &mut Connection, search: Option<String>) -> AppRe
         .collect::<Result<Vec<_>, _>>()?;
 
     let mut packages_stmt = conn.prepare(
-        "SELECT * FROM packages WHERE status = 'published' AND (?1 = '' OR lower(name) LIKE ?2)
+        "SELECT * FROM packages WHERE status = 'published' AND deleted_at IS NULL AND (?1 = '' OR lower(name) LIKE ?2)
          ORDER BY name ASC LIMIT ?3",
     )?;
     let packages = packages_stmt
@@ -373,21 +373,21 @@ pub fn create_with_inventory(
         let found: Option<(String, i64)> = match item.item_type.as_str() {
             "product" => tx
                 .query_row(
-                    "SELECT name, price FROM products WHERE id = ?1 AND status = 'published'",
+                    "SELECT name, price FROM products WHERE id = ?1 AND status = 'published' AND deleted_at IS NULL",
                     params![item.item_id],
                     |row| Ok((row.get(0)?, row.get(1)?)),
                 )
                 .optional()?,
             "service" => tx
                 .query_row(
-                    "SELECT name, price FROM services WHERE id = ?1 AND status = 'published'",
+                    "SELECT name, price FROM services WHERE id = ?1 AND status = 'published' AND deleted_at IS NULL",
                     params![item.item_id],
                     |row| Ok((row.get(0)?, row.get(1)?)),
                 )
                 .optional()?,
             "package" => tx
                 .query_row(
-                    "SELECT name, price FROM packages WHERE id = ?1 AND status = 'published'",
+                    "SELECT name, price FROM packages WHERE id = ?1 AND status = 'published' AND deleted_at IS NULL",
                     params![item.item_id],
                     |row| Ok((row.get(0)?, row.get(1)?)),
                 )
@@ -903,7 +903,7 @@ pub mod postgres {
         let pattern = format!("%{search}%");
 
         let product_rows = sqlx::query(
-            "SELECT * FROM products WHERE status = 'published' AND ($1 = '' OR lower(name) LIKE $2)
+            "SELECT * FROM products WHERE status = 'published' AND deleted_at IS NULL AND ($1 = '' OR lower(name) LIKE $2)
              ORDER BY name ASC LIMIT $3",
         )
         .bind(&search)
@@ -917,7 +917,7 @@ pub mod postgres {
             .collect::<AppResult<Vec<_>>>()?;
 
         let service_rows = sqlx::query(
-            "SELECT * FROM services WHERE status = 'published' AND ($1 = '' OR lower(name) LIKE $2)
+            "SELECT * FROM services WHERE status = 'published' AND deleted_at IS NULL AND ($1 = '' OR lower(name) LIKE $2)
              ORDER BY name ASC LIMIT $3",
         )
         .bind(&search)
@@ -931,7 +931,7 @@ pub mod postgres {
             .collect::<AppResult<Vec<_>>>()?;
 
         let package_rows = sqlx::query(
-            "SELECT * FROM packages WHERE status = 'published' AND ($1 = '' OR lower(name) LIKE $2)
+            "SELECT * FROM packages WHERE status = 'published' AND deleted_at IS NULL AND ($1 = '' OR lower(name) LIKE $2)
              ORDER BY name ASC LIMIT $3",
         )
         .bind(&search)
@@ -1166,19 +1166,19 @@ pub mod postgres {
             }
             let row = match item.item_type.as_str() {
                 "product" => {
-                    sqlx::query("SELECT name, price FROM products WHERE id = $1 AND status = 'published'")
+                    sqlx::query("SELECT name, price FROM products WHERE id = $1 AND status = 'published' AND deleted_at IS NULL")
                         .bind(&item.item_id)
                         .fetch_optional(&mut *tx)
                         .await?
                 }
                 "service" => {
-                    sqlx::query("SELECT name, price FROM services WHERE id = $1 AND status = 'published'")
+                    sqlx::query("SELECT name, price FROM services WHERE id = $1 AND status = 'published' AND deleted_at IS NULL")
                         .bind(&item.item_id)
                         .fetch_optional(&mut *tx)
                         .await?
                 }
                 "package" => {
-                    sqlx::query("SELECT name, price FROM packages WHERE id = $1 AND status = 'published'")
+                    sqlx::query("SELECT name, price FROM packages WHERE id = $1 AND status = 'published' AND deleted_at IS NULL")
                         .bind(&item.item_id)
                         .fetch_optional(&mut *tx)
                         .await?
@@ -2138,5 +2138,75 @@ mod tests {
             .query_row("SELECT stock FROM products WHERE id = 'prod-1'", [], |r| r.get(0))
             .unwrap();
         assert_eq!(stock, 20, "el stock debe volver al nivel original tras anular");
+    }
+
+    #[test]
+    fn deleting_a_sold_product_keeps_history_and_hides_it() {
+        let mut conn = open_test_db();
+        insert_customer(&conn, "cust-1");
+        insert_published_product(&conn, "prod-1", "Shampoo", 50, 10);
+        insert_published_product(&conn, "prod-2", "Crema", 30, 10);
+        insert_published_package(&conn, "pkg-1", "Kit", 70);
+        insert_package_product_item(&conn, "pkg-1", "prod-1", 1);
+        insert_package_product_item(&conn, "pkg-1", "prod-2", 1);
+
+        let sale_id = create_with_inventory(
+            &mut conn,
+            "cust-1".to_string(),
+            None,
+            vec![product_item("prod-1", "Shampoo", 50, 2)],
+            cash_payment(100),
+            None,
+        )
+        .unwrap();
+
+        crate::repositories::products::delete(&mut conn, "prod-1".to_string()).unwrap();
+
+        let row_still_there: i64 = conn
+            .query_row("SELECT COUNT(*) FROM products WHERE id = 'prod-1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(row_still_there, 1, "el producto no se borra, solo se marca");
+
+        let items: i64 = conn
+            .query_row("SELECT COUNT(*) FROM sale_items WHERE sale_id = ?1", params![sale_id], |r| r.get(0))
+            .unwrap();
+        assert_eq!(items, 1, "el historial de la venta se conserva");
+        let movements: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM inventory_movements WHERE product_id = 'prod-1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(movements >= 1, "el historial de inventario se conserva");
+
+        let listed = crate::repositories::products::list(&mut conn, None, None, None).unwrap();
+        assert_eq!(listed.total, 1);
+        assert!(listed.items.iter().all(|p| p.id != "prod-1"));
+        assert_eq!(listed.counts.all, 1);
+
+        let catalog = published_catalog(&mut conn, None).unwrap();
+        assert!(catalog.products.iter().all(|p| p.id != "prod-1"));
+
+        let sell_again = create_with_inventory(
+            &mut conn,
+            "cust-1".to_string(),
+            None,
+            vec![product_item("prod-1", "Shampoo", 50, 1)],
+            cash_payment(50),
+            None,
+        );
+        assert!(sell_again.is_err(), "no se puede vender un producto deshabilitado");
+
+        let in_package: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM package_items WHERE package_id = 'pkg-1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(in_package, 1, "se quita del paquete que lo incluía");
+
+        assert!(crate::repositories::products::delete(&mut conn, "prod-1".to_string()).is_err());
     }
 }

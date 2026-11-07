@@ -6,6 +6,8 @@ import { useEffect, useState } from "react";
 import { CashDay } from "@/components/admin/cash-day";
 import { getPeriodRange } from "@/lib/sales";
 import type { SaleWithDetails } from "@/types/database";
+import { ReportPageSkeleton } from "@/components/admin/skeletons";
+import { useMinLoadingElapsed } from "@/lib/use-min-loading";
 
 type PaymentBreakdown = {
   cash_count: number;
@@ -39,7 +41,8 @@ export default function CashDayPage() {
     };
   }, [reloadKey]);
 
-  if (!summary) return null;
+  const minElapsed = useMinLoadingElapsed();
+  if (!summary || !minElapsed) return <ReportPageSkeleton />;
 
   return (
     <CashDay

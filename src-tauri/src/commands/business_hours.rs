@@ -7,6 +7,7 @@ use serde::Deserialize;
 use tauri::State;
 
 use crate::app_db::AppDb;
+use crate::audit;
 use crate::error::AppResult;
 use crate::models::business_hours::{BusinessHours, EmployeeAvailability};
 use crate::repositories::business_hours as repo;
@@ -37,8 +38,9 @@ pub async fn update_business_hours(
     state: State<'_, AppState>,
     hours: Vec<BusinessHoursInput>,
 ) -> AppResult<Vec<BusinessHours>> {
-    state.require_owner()?;
-    match &state.db {
+    let actor = state.require_owner()?;
+    let tracker = audit::Tracker::start_by(&state.db, &actor, "business_hours.update", "business_hours", audit::ALL_ROWS.0, Some(audit::ALL_ROWS.1), &[]).await;
+    let result = match &state.db {
         AppDb::Sqlite(_) => {
             state
                 .db
@@ -46,7 +48,9 @@ pub async fn update_business_hours(
                 .await
         }
         AppDb::Postgres(pool) => repo::postgres::update_business_hours(pool, hours).await,
-    }
+    }?;
+    tracker.detail("horario del negocio").finish("Actualizó horario").await;
+    Ok(result)
 }
 
 #[derive(Debug, Deserialize)]
@@ -84,8 +88,10 @@ pub async fn update_employee_availability(
     employee_id: String,
     overrides: Vec<EmployeeAvailabilityInput>,
 ) -> AppResult<Vec<EmployeeAvailability>> {
-    state.require_owner()?;
-    match &state.db {
+    let actor = state.require_owner()?;
+    let tracker = audit::Tracker::start_by(&state.db, &actor, "employee.availability_update", "employee_availability", "employee_id", Some(&employee_id), &[]).await;
+    let tracked_employee = audit::name_of(&state.db, "employees", &employee_id).await;
+    let result = match &state.db {
         AppDb::Sqlite(_) => {
             state
                 .db
@@ -97,5 +103,7 @@ pub async fn update_employee_availability(
         AppDb::Postgres(pool) => {
             repo::postgres::update_employee_availability(pool, employee_id, overrides).await
         }
-    }
+    }?;
+    tracker.detail(tracked_employee).finish("Actualizó disponibilidad").await;
+    Ok(result)
 }

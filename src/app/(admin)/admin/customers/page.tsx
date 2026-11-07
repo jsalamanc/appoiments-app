@@ -6,6 +6,8 @@ import { useEffect, useState } from "react";
 
 import { CustomersManager } from "@/components/admin/customers-manager";
 import type { Customer } from "@/types/database";
+import { TablePageSkeleton } from "@/components/admin/skeletons";
+import { useMinLoadingElapsed } from "@/lib/use-min-loading";
 
 type ListResult = {
   items: Customer[];
@@ -35,7 +37,8 @@ export default function CustomersPage() {
     };
   }, [page, q]);
 
-  if (!result) return null;
+  const minElapsed = useMinLoadingElapsed();
+  if (!result || !minElapsed) return <TablePageSkeleton />;
 
   return (
     <CustomersManager

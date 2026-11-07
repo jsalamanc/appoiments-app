@@ -5,6 +5,8 @@ import { useEffect, useState } from "react";
 
 import { InventoryLowStock } from "@/components/admin/inventory-low-stock";
 import type { Product } from "@/types/database";
+import { ReportPageSkeleton } from "@/components/admin/skeletons";
+import { useMinLoadingElapsed } from "@/lib/use-min-loading";
 
 type LowStockResult = {
   products: Product[];
@@ -27,7 +29,8 @@ export default function InventoryPage() {
     };
   }, [reloadKey]);
 
-  if (!result) return null;
+  const minElapsed = useMinLoadingElapsed();
+  if (!result || !minElapsed) return <ReportPageSkeleton />;
 
   return (
     <InventoryLowStock

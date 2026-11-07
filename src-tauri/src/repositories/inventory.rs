@@ -10,7 +10,7 @@ pub fn list_low_stock(conn: &mut Connection, threshold: Option<i64>) -> AppResul
     let threshold = threshold.unwrap_or(LOW_STOCK_THRESHOLD);
 
     let mut stmt =
-        conn.prepare("SELECT * FROM products WHERE stock <= ?1 ORDER BY stock ASC, name ASC")?;
+        conn.prepare("SELECT * FROM products WHERE deleted_at IS NULL AND stock <= ?1 ORDER BY stock ASC, name ASC")?;
     let products = stmt
         .query_map(params![threshold], Product::from_row)?
         .collect::<Result<Vec<_>, _>>()?;
@@ -84,7 +84,7 @@ pub mod postgres {
     pub async fn list_low_stock(pool: &PgPool, threshold: Option<i64>) -> AppResult<LowStockResult> {
         let threshold = threshold.unwrap_or(LOW_STOCK_THRESHOLD);
 
-        let rows = sqlx::query("SELECT * FROM products WHERE stock <= $1 ORDER BY stock ASC, name ASC")
+        let rows = sqlx::query("SELECT * FROM products WHERE deleted_at IS NULL AND stock <= $1 ORDER BY stock ASC, name ASC")
             .bind(threshold)
             .fetch_all(pool)
             .await?;
