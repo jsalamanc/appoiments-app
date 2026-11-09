@@ -15,6 +15,13 @@ pub struct AppState {
     /// (quién opera la app ahora mismo, rol `owner`/`staff`). Ver
     /// `crate::cognito`.
     pub cognito_session: Mutex<Option<CognitoSessionInfo>>,
+    /// Cache en memoria del `id_token` vigente — nunca se persiste (ni en el
+    /// keyring ni en disco): en Windows, el Credential Manager rechaza
+    /// credenciales de más de 2560 bytes, y un `id_token` de Cognito con
+    /// varios grupos/atributos personalizados puede superar ese límite. Se
+    /// pierde al cerrar la app, lo cual está bien: `cognito::resolve_or_refresh`
+    /// lo repone pidiendo uno nuevo con el `refresh_token` (ese sí persistido).
+    pub cognito_id_token: Mutex<Option<String>>,
 }
 
 impl AppState {
@@ -23,6 +30,7 @@ impl AppState {
             db: AppDb::Sqlite(Arc::new(Mutex::new(db))),
             current_user: Mutex::new(None),
             cognito_session: Mutex::new(None),
+            cognito_id_token: Mutex::new(None),
         }
     }
 
@@ -31,6 +39,7 @@ impl AppState {
             db: AppDb::Postgres(pool),
             current_user: Mutex::new(None),
             cognito_session: Mutex::new(None),
+            cognito_id_token: Mutex::new(None),
         }
     }
 

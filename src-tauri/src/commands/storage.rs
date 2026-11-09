@@ -137,7 +137,7 @@ async fn storage_switch_mode_inner(
         let staying_on_same_business =
             mode == "nube" && nube_business_id.as_deref() == Some(previous.business_id.as_str());
         if !staying_on_same_business {
-            match cognito::ensure_fresh_id_token(&dir).await {
+            match cognito::ensure_fresh_id_token(&dir, &state).await {
                 Ok(id_token) => {
                     if let Err(e) = VendorClient::new(id_token)
                         .unlink_installation(&previous.business_id)
@@ -224,7 +224,7 @@ async fn storage_switch_mode_inner(
                 }
             };
 
-            let id_token = cognito::ensure_fresh_id_token(&dir).await?;
+            let id_token = cognito::ensure_fresh_id_token(&dir, &state).await?;
             let installation_id = vendor::get_or_create_installation_id(&dir)
                 .map_err(|e| AppError::Internal(format!("no se pudo preparar el id de instalación: {e}")))?;
 

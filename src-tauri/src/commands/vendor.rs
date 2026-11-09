@@ -18,7 +18,7 @@ pub async fn vendor_list_businesses(
 ) -> AppResult<Vec<VendorBusiness>> {
     state.require_owner()?;
     let dir = config_dir(&app)?;
-    let id_token = cognito::ensure_fresh_id_token(&dir).await?;
+    let id_token = cognito::ensure_fresh_id_token(&dir, &state).await?;
     VendorClient::new(id_token).list_businesses().await
 }
 
@@ -39,7 +39,7 @@ pub async fn vendor_create_business(
         return Err(AppError::validation("El nombre del negocio es obligatorio"));
     }
     let dir = config_dir(&app)?;
-    let id_token = cognito::ensure_fresh_id_token(&dir).await?;
+    let id_token = cognito::ensure_fresh_id_token(&dir, &state).await?;
     VendorClient::new(id_token)
         .create_business(input.business_name.trim())
         .await
@@ -58,7 +58,7 @@ pub async fn vendor_connect_business(
 ) -> AppResult<VendorConnectPreview> {
     state.require_owner()?;
     let dir = config_dir(&app)?;
-    let id_token = cognito::ensure_fresh_id_token(&dir).await?;
+    let id_token = cognito::ensure_fresh_id_token(&dir, &state).await?;
     let installation_id = vendor::get_or_create_installation_id(&dir)
         .map_err(|e| AppError::Internal(format!("no se pudo preparar el id de instalación: {e}")))?;
     let outcome = VendorClient::new(id_token)
@@ -75,7 +75,7 @@ pub async fn vendor_unlink_installation(
 ) -> AppResult<()> {
     state.require_owner()?;
     let dir = config_dir(&app)?;
-    let id_token = cognito::ensure_fresh_id_token(&dir).await?;
+    let id_token = cognito::ensure_fresh_id_token(&dir, &state).await?;
     VendorClient::new(id_token)
         .unlink_installation(&business_id)
         .await

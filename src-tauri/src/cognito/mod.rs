@@ -183,16 +183,24 @@ pub fn clear_marker(config_dir: &Path) -> std::io::Result<()> {
 }
 
 // --- Keychain: tokens guardados por separado, nunca en storage.json/localStorage ---
+//
+// El `id_token` deliberadamente NO se persiste acá: es un JWT que crece con
+// los claims del usuario (grupos, atributos personalizados), y en Windows el
+// Credential Manager rechaza cualquier credencial de más de 2560 bytes
+// (`CRED_MAX_CREDENTIAL_BLOB_SIZE`), lo que rompía el login para cuentas con
+// `id_token`s más largos. Solo vive en memoria, en `AppState::cognito_id_token`
+// — ver `resolve_or_refresh`, que lo repone con el `refresh_token` (sí
+// persistido, y mucho más chico) cuando hace falta.
 
 fn keyring_entry(account: &str) -> keyring::Result<keyring::Entry> {
     keyring::Entry::new(KEYRING_SERVICE, account)
 }
 
-/// Guarda `id_token`/`access_token` siempre, y `refresh_token` solo si vino
-/// en la respuesta (login inicial; un refresh normalmente no trae uno nuevo,
-/// así que no se pisa el que ya había).
+/// Guarda `access_token` siempre, y `refresh_token` solo si vino en la
+/// respuesta (login inicial; un refresh normalmente no trae uno nuevo, así
+/// que no se pisa el que ya había). El `id_token` nunca se persiste, ver
+/// arriba.
 pub fn set_tokens(tokens: &AuthTokens) -> keyring::Result<()> {
-    keyring_entry("id_token")?.set_password(&tokens.id_token)?;
     keyring_entry("access_token")?.set_password(&tokens.access_token)?;
     if let Some(refresh_token) = &tokens.refresh_token {
         keyring_entry("refresh_token")?.set_password(refresh_token)?;
@@ -200,19 +208,14 @@ pub fn set_tokens(tokens: &AuthTokens) -> keyring::Result<()> {
     Ok(())
 }
 
-struct StoredTokens {
-    id_token: String,
-    refresh_token: String,
-}
-
-fn get_tokens() -> keyring::Result<StoredTokens> {
-    Ok(StoredTokens {
-        id_token: keyring_entry("id_token")?.get_password()?,
-        refresh_token: keyring_entry("refresh_token")?.get_password()?,
-    })
+fn get_refresh_token() -> keyring::Result<String> {
+    keyring_entry("refresh_token")?.get_password()
 }
 
 pub fn clear_tokens() {
+    // "id_token" queda en la lista por compatibilidad con instalaciones
+    // previas a este cambio que todavía puedan tener una entrada vieja
+    // guardada ahí; borrarla es un no-op si no existe.
     for account in ["id_token", "access_token", "refresh_token"] {
         if let Ok(entry) = keyring_entry(account) {
             let _ = entry.delete_credential();
@@ -488,40 +491,48 @@ impl Default for CognitoClient {
 
 /// Núcleo compartido entre `resolve_session_on_startup` (arranque) y
 /// `ensure_fresh_id_token` (bajo demanda, para llamadas a `vendor::`): dado
-/// el marcador + tokens guardados, decide si el `id_token` sigue fresco o si
-/// hace falta refrescarlo en silencio, y devuelve la sesión resuelta junto
-/// con un `id_token` válido. Una sola implementación del refresh, no dos
-/// copias.
-async fn resolve_or_refresh(config_dir: &Path) -> Option<(CognitoSessionInfo, String)> {
+/// el marcador + el cache en memoria + el `refresh_token` guardado, decide si
+/// el `id_token` en memoria sigue fresco o si hace falta pedir uno nuevo en
+/// silencio, y devuelve la sesión resuelta junto con un `id_token` válido.
+/// Una sola implementación del refresh, no dos copias.
+async fn resolve_or_refresh(
+    config_dir: &Path,
+    state: &crate::state::AppState,
+) -> Option<(CognitoSessionInfo, String)> {
     let marker = load_marker(config_dir)?;
     if !marker.established {
         return None;
     }
 
-    let stored = get_tokens().ok()?;
-    let claims = decode_jwt_claims(&stored.id_token).ok()?;
-
     let now = OffsetDateTime::now_utc().unix_timestamp();
-    if claims.exp - now > REFRESH_MARGIN_SECONDS {
-        // Todavía fresco: nada de red, esto es lo que hace que reabrir la
-        // app (o pedir un token para `vendor::`) sea instantáneo la mayoría
-        // de las veces.
-        return Some((CognitoSessionInfo::from_claims(&claims), stored.id_token));
+
+    // El `id_token` nunca se persiste (ver comentario arriba de
+    // `set_tokens`), así que lo primero es mirar si ya hay uno fresco en
+    // memoria de esta misma corrida de la app -- eso es lo que hace que
+    // pedir un token para `vendor::` sea instantáneo la mayoría de las
+    // veces, sin tocar red ni el keyring.
+    if let Some(cached) = state.cognito_id_token.lock().unwrap().clone() {
+        if let Ok(claims) = decode_jwt_claims(&cached) {
+            if claims.exp - now > REFRESH_MARGIN_SECONDS {
+                return Some((CognitoSessionInfo::from_claims(&claims), cached));
+            }
+        }
     }
 
+    // Sin cache vigente (recién arrancó la app, o venció): hace falta un
+    // `refresh_token` guardado para pedir un `id_token` nuevo.
+    let refresh_token = get_refresh_token().ok()?;
+
     let client = CognitoClient::new();
-    match client.refresh(&stored.refresh_token).await {
+    match client.refresh(&refresh_token).await {
         Ok(new_tokens) => {
             let refreshed_claims = decode_jwt_claims(&new_tokens.id_token).ok()?;
             let fresh_id_token = new_tokens.id_token.clone();
-            let _ = set_tokens(&AuthTokens {
-                id_token: new_tokens.id_token,
-                access_token: new_tokens.access_token,
-                // `REFRESH_TOKEN_AUTH` no rota el refresh token: se conserva
-                // el que ya estaba guardado (`set_tokens` no lo toca si viene
-                // `None`).
-                refresh_token: None,
-            });
+            *state.cognito_id_token.lock().unwrap() = Some(new_tokens.id_token);
+            // `REFRESH_TOKEN_AUTH` no rota el refresh token, así que solo
+            // hace falta actualizar el `access_token` guardado (el
+            // `id_token` nunca se persiste, ver arriba).
+            let _ = keyring_entry("access_token").and_then(|e| e.set_password(&new_tokens.access_token));
             let mut updated_marker = marker;
             updated_marker.last_login_at = now_iso();
             let _ = save_marker(config_dir, &updated_marker);
@@ -536,6 +547,7 @@ async fn resolve_or_refresh(config_dir: &Path) -> Option<(CognitoSessionInfo, St
             // del negocio, que siguen intactos). El usuario la va a ver pedir
             // de nuevo la próxima vez que la necesite.
             clear_tokens();
+            *state.cognito_id_token.lock().unwrap() = None;
             let _ = clear_marker(config_dir);
             None
         }
@@ -544,11 +556,16 @@ async fn resolve_or_refresh(config_dir: &Path) -> Option<(CognitoSessionInfo, St
 
 /// Se llama una sola vez, desde `lib.rs::setup`, **después** de que la base
 /// de datos del negocio ya está abierta — un problema acá nunca debe impedir
-/// que la app abra. Devuelve `None` si no hay sesión establecida o si no se
-/// pudo recuperar (keychain vacío/corrupto, refresh token vencido), en cuyo
-/// caso el frontend va a mostrar el gate de Cognito de nuevo.
-pub fn resolve_session_on_startup(config_dir: &Path) -> Option<CognitoSessionInfo> {
-    tauri::async_runtime::block_on(resolve_or_refresh(config_dir)).map(|(session, _)| session)
+/// que la app abra. Al no persistirse el `id_token` (ver arriba), reabrir la
+/// app siempre implica un refresh silencioso contra Cognito usando el
+/// `refresh_token` guardado. Devuelve `None` si no hay sesión establecida o
+/// si no se pudo recuperar (keychain vacío/corrupto, refresh token vencido),
+/// en cuyo caso el frontend va a mostrar el gate de Cognito de nuevo.
+pub fn resolve_session_on_startup(
+    config_dir: &Path,
+    state: &crate::state::AppState,
+) -> Option<CognitoSessionInfo> {
+    tauri::async_runtime::block_on(resolve_or_refresh(config_dir, state)).map(|(session, _)| session)
 }
 
 /// Pide un `id_token` vigente para una llamada puntual a `vendor::` (listar
@@ -556,8 +573,11 @@ pub fn resolve_session_on_startup(config_dir: &Path) -> Option<CognitoSessionInf
 /// `AppError::Unauthorized` significa "no hay sesión usable" — el frontend
 /// debe mostrar el login de la cuenta de Aura Studio de nuevo, igual que
 /// cualquier otro `Unauthorized` ya existente (`AppState::require_user`).
-pub async fn ensure_fresh_id_token(config_dir: &Path) -> AppResult<String> {
-    resolve_or_refresh(config_dir)
+pub async fn ensure_fresh_id_token(
+    config_dir: &Path,
+    state: &crate::state::AppState,
+) -> AppResult<String> {
+    resolve_or_refresh(config_dir, state)
         .await
         .map(|(_, id_token)| id_token)
         .ok_or(AppError::Unauthorized)
@@ -611,7 +631,10 @@ mod tests {
     #[test]
     fn ensure_fresh_id_token_without_session_is_unauthorized() {
         let dir = temp_dir();
-        let result = tauri::async_runtime::block_on(ensure_fresh_id_token(&dir));
+        let state = crate::state::AppState::new(
+            rusqlite::Connection::open_in_memory().expect("conexión en memoria"),
+        );
+        let result = tauri::async_runtime::block_on(ensure_fresh_id_token(&dir, &state));
         assert!(matches!(result, Err(AppError::Unauthorized)));
     }
 }

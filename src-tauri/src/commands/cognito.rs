@@ -134,6 +134,7 @@ pub async fn cognito_login(
 
     cognito::set_tokens(&tokens)
         .map_err(|e| AppError::Internal(format!("No se pudo guardar la sesión: {e}")))?;
+    *state.cognito_id_token.lock().unwrap() = Some(tokens.id_token.clone());
 
     let dir = config_dir(&app)?;
     let marker = cognito::CognitoInstallationMarker {
@@ -157,6 +158,7 @@ pub fn cognito_logout(app: AppHandle, state: State<AppState>) -> AppResult<()> {
         let _ = cognito::clear_marker(&dir);
     }
     *state.cognito_session.lock().unwrap() = None;
+    *state.cognito_id_token.lock().unwrap() = None;
     Ok(())
 }
 

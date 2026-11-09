@@ -68,7 +68,7 @@ pub fn run() {
             // la app con un `id_token` todavía fresco no hace ninguna
             // llamada de red; si venció, refresca en silencio una sola vez.
             *app_state.cognito_session.lock().unwrap() =
-                cognito::resolve_session_on_startup(&config_dir);
+                cognito::resolve_session_on_startup(&config_dir, &app_state);
 
             app.manage(app_state);
 
