@@ -187,13 +187,79 @@ pub fn clear_marker(config_dir: &Path) -> std::io::Result<()> {
 // El `id_token` deliberadamente NO se persiste acá: es un JWT que crece con
 // los claims del usuario (grupos, atributos personalizados), y en Windows el
 // Credential Manager rechaza cualquier credencial de más de 2560 bytes
-// (`CRED_MAX_CREDENTIAL_BLOB_SIZE`), lo que rompía el login para cuentas con
-// `id_token`s más largos. Solo vive en memoria, en `AppState::cognito_id_token`
-// — ver `resolve_or_refresh`, que lo repone con el `refresh_token` (sí
-// persistido, y mucho más chico) cuando hace falta.
+// (`CRED_MAX_CREDENTIAL_BLOB_SIZE`). Solo vive en memoria, en
+// `AppState::cognito_id_token` — ver `resolve_or_refresh`, que lo repone con
+// el `refresh_token` cuando hace falta.
+//
+// Pero ese mismo límite de Windows también le pega al `access_token` y sobre
+// todo al `refresh_token`: son strings opacos emitidos por Cognito cuyo
+// largo esta app no controla, y de hecho en la práctica suelen superar los
+// 2560 bytes igual que el `id_token` (así se confirmó: sacar el `id_token`
+// del keyring no alcanzó para que el login dejara de fallar en Windows). La
+// solución genérica es no depender de que un solo valor entre en una sola
+// credencial: cada token se parte en `CHUNK_SIZE` caracteres y cada parte se
+// guarda en su propia entrada (`{account}_0`, `{account}_1`, ...), con
+// `{account}_count` indicando cuántas hay. Esto no tiene techo práctico de
+// tamaño y es exactamente lo mismo en Linux/macOS, donde ya entraban enteros
+// en una sola entrada.
+const CHUNK_SIZE: usize = 900;
 
 fn keyring_entry(account: &str) -> keyring::Result<keyring::Entry> {
     keyring::Entry::new(KEYRING_SERVICE, account)
+}
+
+fn set_chunked_secret(account: &str, value: &str) -> keyring::Result<()> {
+    clear_chunked_secret(account);
+    let chars: Vec<char> = value.chars().collect();
+    let chunks: Vec<String> = if chars.is_empty() {
+        vec![String::new()]
+    } else {
+        chars
+            .chunks(CHUNK_SIZE)
+            .map(|c| c.iter().collect())
+            .collect()
+    };
+    keyring_entry(&format!("{account}_count"))?.set_password(&chunks.len().to_string())?;
+    for (i, chunk) in chunks.iter().enumerate() {
+        keyring_entry(&format!("{account}_{i}"))?.set_password(chunk)?;
+    }
+    Ok(())
+}
+
+fn get_chunked_secret(account: &str) -> keyring::Result<String> {
+    // Compatibilidad con instalaciones que venían de una versión anterior
+    // (guardaban el valor entero bajo `account`, sin partir): si no hay
+    // `{account}_count`, se intenta leer la entrada vieja tal cual.
+    let count_entry = keyring_entry(&format!("{account}_count"))?;
+    let count: usize = match count_entry.get_password() {
+        Ok(raw) => raw
+            .parse()
+            .map_err(|_| keyring::Error::NoEntry)?,
+        Err(keyring::Error::NoEntry) => return keyring_entry(account)?.get_password(),
+        Err(e) => return Err(e),
+    };
+    let mut value = String::new();
+    for i in 0..count {
+        value.push_str(&keyring_entry(&format!("{account}_{i}"))?.get_password()?);
+    }
+    Ok(value)
+}
+
+fn clear_chunked_secret(account: &str) {
+    if let Ok(entry) = keyring_entry(&format!("{account}_count")) {
+        if let Ok(count) = entry.get_password().unwrap_or_default().parse::<usize>() {
+            for i in 0..count {
+                if let Ok(e) = keyring_entry(&format!("{account}_{i}")) {
+                    let _ = e.delete_credential();
+                }
+            }
+        }
+        let _ = entry.delete_credential();
+    }
+    // Entrada "plana" de una versión anterior (sin partir), si quedó alguna.
+    if let Ok(entry) = keyring_entry(account) {
+        let _ = entry.delete_credential();
+    }
 }
 
 /// Guarda `access_token` siempre, y `refresh_token` solo si vino en la
@@ -201,26 +267,26 @@ fn keyring_entry(account: &str) -> keyring::Result<keyring::Entry> {
 /// que no se pisa el que ya había). El `id_token` nunca se persiste, ver
 /// arriba.
 pub fn set_tokens(tokens: &AuthTokens) -> keyring::Result<()> {
-    keyring_entry("access_token")?.set_password(&tokens.access_token)?;
+    set_chunked_secret("access_token", &tokens.access_token)?;
     if let Some(refresh_token) = &tokens.refresh_token {
-        keyring_entry("refresh_token")?.set_password(refresh_token)?;
+        set_chunked_secret("refresh_token", refresh_token)?;
     }
     Ok(())
 }
 
 fn get_refresh_token() -> keyring::Result<String> {
-    keyring_entry("refresh_token")?.get_password()
+    get_chunked_secret("refresh_token")
 }
 
 pub fn clear_tokens() {
     // "id_token" queda en la lista por compatibilidad con instalaciones
     // previas a este cambio que todavía puedan tener una entrada vieja
     // guardada ahí; borrarla es un no-op si no existe.
-    for account in ["id_token", "access_token", "refresh_token"] {
-        if let Ok(entry) = keyring_entry(account) {
-            let _ = entry.delete_credential();
-        }
+    if let Ok(entry) = keyring_entry("id_token") {
+        let _ = entry.delete_credential();
     }
+    clear_chunked_secret("access_token");
+    clear_chunked_secret("refresh_token");
 }
 
 // --- Cliente HTTP ------------------------------------------------------------------
@@ -532,7 +598,7 @@ async fn resolve_or_refresh(
             // `REFRESH_TOKEN_AUTH` no rota el refresh token, así que solo
             // hace falta actualizar el `access_token` guardado (el
             // `id_token` nunca se persiste, ver arriba).
-            let _ = keyring_entry("access_token").and_then(|e| e.set_password(&new_tokens.access_token));
+            let _ = set_chunked_secret("access_token", &new_tokens.access_token);
             let mut updated_marker = marker;
             updated_marker.last_login_at = now_iso();
             let _ = save_marker(config_dir, &updated_marker);
